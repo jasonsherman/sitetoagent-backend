@@ -29,7 +29,24 @@ def analyze_content():
 def analyze_url_endpoint():
     logger.info("Received request to /api/analyze-url")
     try:
-        data = request.get_json()
+        # Try to get JSON data first
+        try:
+            data = request.get_json()
+        except Exception:
+            # If JSON parsing fails, try to get raw data and parse it
+            raw_data = request.get_data(as_text=True)
+            # Handle JavaScript-style object literal
+            if raw_data and 'url' in raw_data:
+                # Extract URL using string manipulation
+                url_start = raw_data.find('url') + 4
+                url_end = raw_data.find('}', url_start)
+                if url_end == -1:
+                    url_end = len(raw_data)
+                url = raw_data[url_start:url_end].strip().strip('"\'')
+                data = {'url': url}
+            else:
+                data = None
+
         if not data or 'url' not in data:
             logger.warning("No URL provided in request")
             return jsonify({'error': 'No URL provided'}), 400

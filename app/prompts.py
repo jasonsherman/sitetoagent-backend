@@ -14,15 +14,20 @@ def get_analysis_prompt():
                 "brandVoice":              { "type": "string" },
                 "valuePropositions":       { "type": "array",  "items": { "type": "string" } },
 
-                "services":                { "type": "string" },
-                "differentiators":         { "type": "string" },
-                "profitableItems":         { "type": "string" },
+                "providedServicesProducts":{ "type": "string",
+                                            "description": "Two or more paragraphs answering: What services or products does your business provide?" },
+                "competitiveDifference":   { "type": "string",
+                                            "description": "Two or more paragraphs answering: How are you different from your competitors?" },
+                "mostProfitableLineItems": { "type": "string",
+                                            "description": "Two or more paragraphs answering: What are your most profitable line items?" },
 
-                "providedServicesProducts":{ "type": "string",  "description": "Answer: What services or products does your business provide?" },
-                "competitiveDifference":   { "type": "string",  "description": "Answer: How are you different from your competitors?" },
-                "mostProfitableLineItems": { "type": "string",  "description": "Answer: What are your most profitable line items?" },
-                "bestSalesLines":          { "type": "array",   "items": { "type": "string" },
-                                            "description": "Answer: What are your 5 best sales lines to close a deal?" }
+                "bestSalesLines":          { "type": "array",   "items": { "type": "string" } }
+
+                "greetings": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Five friendly welcome messages. Use ${domain} as a placeholder for the site domain if helpful."
+                }
             },
             "required": [
                 "businessOverview",
@@ -30,20 +35,22 @@ def get_analysis_prompt():
                 "servicesProducts",
                 "brandVoice",
                 "valuePropositions",
-                "services",
-                "differentiators",
-                "profitableItems",
                 "providedServicesProducts",
                 "competitiveDifference",
                 "mostProfitableLineItems",
-                "bestSalesLines"
+                "bestSalesLines",
+                "greetings"
             ]
         }
 
         Rules:
         * Output **only** valid JSON (no markdown fencing, no explanatory prose).
         * Each array must have **exactly 5 elements** where the schema calls for 5.
-        * Use short, information‑dense sentences. Do not cite headings literally; paraphrase.
+        * For providedServicesProducts, competitiveDifference, and mostProfitableLineItems  
+            – write **at least two paragraphs**, separated by a blank line, max three sentences each. 
+        * For greetings
+            – provide five concise, friendly welcome lines (1 – 2 sentences each),  
+            – you *may* insert **${domain}** anywhere to reference the site dynamically. 
         * If the answer is unknown, output an empty string (`""`) or an empty array (`[]`) as appropriate.
         * Think step by step, but at the end, return only the final answer prefixed with Answer:
 

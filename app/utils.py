@@ -140,7 +140,13 @@ def is_valid_url(url):
     try:
         result = urlparse(url)
         is_valid = all([result.scheme, result.netloc])
-        logger.debug(f"URL validation for {url}: {is_valid}")
+        
+        # Remove 'www.' from the domain for comparison
+        domain = result.netloc
+        if domain.startswith('www.'):
+            domain = domain[4:]
+            
+        logger.debug(f"URL validation for {url}: {is_valid}, domain: {domain}")
         return is_valid
     except Exception as e:
         logger.error(f"URL validation failed for {url}: {str(e)}")
@@ -196,14 +202,25 @@ def get_links(soup, base_url):
     Extract all links from the page that belong to the same domain
     """
     try:
-        base_domain = urlparse(base_url).netloc
+        # Parse base URL and get domain without www
+        base_parsed = urlparse(base_url)
+        base_domain = base_parsed.netloc
+        if base_domain.startswith('www.'):
+            base_domain = base_domain[4:]
+            
         links = set()
         
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href']
             full_url = urljoin(base_url, href)
             
-            if is_valid_url(full_url) and urlparse(full_url).netloc == base_domain:
+            # Parse the full URL and get domain without www
+            full_parsed = urlparse(full_url)
+            full_domain = full_parsed.netloc
+            if full_domain.startswith('www.'):
+                full_domain = full_domain[4:]
+            
+            if is_valid_url(full_url) and full_domain == base_domain:
                 links.add(full_url)
         
         logger.debug(f"Found {len(links)} valid links on {base_url}")
@@ -260,14 +277,23 @@ def scrape_url(url, max_pages=1):
                 time.sleep(delay)
                 
                 # First attempt with regular requests
-                response = requests.get(current_url, headers=headers, timeout=10)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, 'html.parser')
+                try:
+                    response = requests.get(current_url, headers=headers, timeout=10)
+                    response.raise_for_status()
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Regular request failed for {current_url}, trying Pyppeteer: {str(e)}")
+                    html = run_pyppeteer(current_url)
+                    if html:
+                        soup = BeautifulSoup(html, 'html.parser')
+                        logger.info("Successfully fetched content with Pyppeteer")
+                    else:
+                        logger.warning(f"Both regular request and Pyppeteer failed for {current_url}")
+                        continue
                 
                 # Check if content seems sufficient
                 if not is_content_sufficient(soup):
                     logger.info(f"Content seems insufficient, trying Pyppeteer for {current_url}")
-                    # Fallback to Pyppeteer using the new run_pyppeteer function
                     html = run_pyppeteer(current_url)
                     if html:
                         soup = BeautifulSoup(html, 'html.parser')
@@ -302,6 +328,11 @@ def scrape_url(url, max_pages=1):
                 logger.error(f"Error scraping {current_url}: {str(e)}")
                 continue
         
+        if not all_content:
+            error_msg = f"No content could be scraped from {url}. The website might be blocking automated access or the content is not accessible."
+            logger.error(error_msg)
+            raise Exception(error_msg)
+            
         logger.info(f"Completed scraping {len(visited_urls)} pages, total content length: {total_content_length}")
         return all_content
         
@@ -319,7 +350,16 @@ def process_content(content):
         
         # Convert structured content to text format for the prompt
         formatted_content = []
+        domain = None
+        
         for page in content:
+            # Extract domain from the first URL we process
+            if not domain:
+                parsed_url = urlparse(page['url'])
+                domain = parsed_url.netloc
+                if domain.startswith('www.'):
+                    domain = domain[4:]
+            
             formatted_content.append(f"URL: {page['url']}")
             formatted_content.append(f"Title: {page['title']}")
             formatted_content.append(f"Description: {page['description']}")
@@ -329,6 +369,7 @@ def process_content(content):
         
         combined_content = "\n".join(formatted_content)
         prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
+        prompt = prompt.replace("${domain}", domain)
         
         logger.debug("Sending request to OpenAI API")
         completion = client.chat.completions.create(
@@ -344,21 +385,43 @@ def process_content(content):
         
         # Extract the answer from the response
         response_content = completion.choices[0].message.content
+        
+        # Save raw response for debugging before processing
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        raw_response_file = save_data_with_rotation(
+            {
+                "raw_response": response_content
+            },
+            "raw_response.json",
+            debug=True
+        )
+        logger.debug(f"Saved raw response to {raw_response_file}")
+        
         last_index = response_content.lower().rfind("answer:")
-        result = json.loads(response_content[last_index + len("answer:"):].strip())
+        
+        if last_index == -1:
+            logger.error("No 'answer:' found in the response")
+            raise Exception("Invalid response format: No 'answer:' found")
+            
+        json_str = response_content[last_index + len("answer:"):].strip()
+        
+        # Try to clean the JSON string if it's not valid
+        try:
+            # Remove any markdown code block indicators
+            json_str = json_str.replace("```json", "").replace("```", "").strip()
+            result = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            logger.error(f"Raw JSON string: {json_str}")
+            raise Exception(f"Invalid JSON response: {str(e)}")
         
         # Save the model's response for debugging
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        debug_filename = f"model_response_{timestamp}.json"
-        
-        # Save debug data with rotation policy
         debug_file = save_data_with_rotation(
             {
                 "prompt": prompt,
-                "raw_response": response_content,
                 "parsed_result": result
             },
-            debug_filename,
+            "model_response.json",
             debug=True
         )
             

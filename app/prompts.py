@@ -23,10 +23,10 @@ def get_analysis_prompt():
 
                 "bestSalesLines":          { "type": "array",   "items": { "type": "string" } }
 
-                "greetings": {
+               "greetings": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Five friendly welcome messages. Use ${domain} as a placeholder for the site domain if helpful."
+                    "description": "Five friendly welcome messages, each ending with a question to spark conversation. Feel free to use ${domain} as a placeholder."
                 }
             },
             "required": [

@@ -52,10 +52,9 @@ def analyze_url_endpoint():
             return jsonify({'error': 'No URL provided'}), 400
             
         url = data['url']
-        max_pages = data.get('max_pages', 1)  # Default to 1 if not specified
+        max_pages = data.get('max_pages', 4)  # Default to 4 if not specified
         
         logger.debug(f"URL: {url}, max_pages: {max_pages}")
-        
         # Validate max_pages
         try:
             max_pages = int(max_pages)

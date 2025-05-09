@@ -15,7 +15,7 @@ import re
 from datetime import datetime
 import nest_asyncio
 from concurrent.futures import ProcessPoolExecutor
-import multiprocessing
+from app.status_store import set_status
 
 # Initialize logger
 logger = setup_logger('utils')
@@ -249,12 +249,14 @@ def is_content_sufficient(soup):
         
     return True
 
-def scrape_url(url, max_pages=1):
+def scrape_url(url, max_pages=1, task_id=None):
     """
     Scrape content from a given URL and its linked pages up to max_pages
     """
     logger.info(f"Starting scraping process for {url} with max_pages={max_pages}")
     try:
+        if task_id:
+            set_status(task_id, {"step": "scraping", "progress": 10, "message": "Scraping website content"})
         visited_urls = set()
         urls_to_visit = {url}
         all_content = []
@@ -315,6 +317,10 @@ def scrape_url(url, max_pages=1):
                     all_content.append(structured_data)
                     total_content_length += current_content_length
                     visited_urls.add(current_url)
+                    # Update progress for each page scraped
+                    if task_id:
+                        progress = min(10 + int(20 * len(visited_urls) / max_pages), 30)
+                        set_status(task_id, {"step": "scraping", "progress": progress, "message": f"Scraped {len(visited_urls)} of {max_pages} pages"})
                 else:
                     logger.warning(f"Skipping {current_url} due to empty content")
                 
@@ -331,21 +337,29 @@ def scrape_url(url, max_pages=1):
         if not all_content:
             error_msg = f"No content could be scraped from {url}. The website might be blocking automated access or the content is not accessible."
             logger.error(error_msg)
+            if task_id:
+                set_status(task_id, {"step": "error", "progress": 100, "message": error_msg})
             raise Exception(error_msg)
             
         logger.info(f"Completed scraping {len(visited_urls)} pages, total content length: {total_content_length}")
+        if task_id:
+            set_status(task_id, {"step": "business_overview", "progress": 33, "message": "Creating business overview"})
         return all_content
         
     except Exception as e:
         logger.error(f"Error in scraping process for {url}: {str(e)}")
+        if task_id:
+            set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise Exception(f"Error in scraping process: {str(e)}")
 
-def process_content(content):
+def process_content(content, task_id=None):
     """
     Process the content using OpenAI API and return the analysis
     """
     logger.info("Starting content processing with OpenAI")
     try:
+        if task_id:
+            set_status(task_id, {"step": "business_overview", "progress": 33, "message": "Creating business overview"})
         client = get_openai_client()
         
         # Convert structured content to text format for the prompt
@@ -372,6 +386,8 @@ def process_content(content):
         prompt = prompt.replace("${domain}", domain)
         
         logger.debug("Sending request to OpenAI API")
+        if task_id:
+            set_status(task_id, {"step": "services_products", "progress": 50, "message": "Analyzing services & products"})
         completion = client.chat.completions.create(
             extra_body={},
             model="microsoft/phi-4-reasoning-plus:free",
@@ -401,6 +417,8 @@ def process_content(content):
         
         if last_index == -1:
             logger.error("No 'answer:' found in the response")
+            if task_id:
+                set_status(task_id, {"step": "error", "progress": 100, "message": "No 'answer:' found in the response"})
             raise Exception("Invalid response format: No 'answer:' found")
             
         json_str = response_content[last_index + len("answer:"):].strip()
@@ -413,6 +431,8 @@ def process_content(content):
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing error: {str(e)}")
             logger.error(f"Raw JSON string: {json_str}")
+            if task_id:
+                set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
             raise Exception(f"Invalid JSON response: {str(e)}")
         
         # Save the model's response for debugging
@@ -424,40 +444,47 @@ def process_content(content):
             "model_response.json",
             debug=True
         )
-            
+        
+        if task_id:
+            set_status(task_id, {"step": "unique_selling_points", "progress": 66, "message": "Identifying unique selling points"})
+            set_status(task_id, {"step": "brand_voice", "progress": 80, "message": "Determining brand voice"})
+            set_status(task_id, {"step": "sales_qa", "progress": 90, "message": "Generating sales Q&A"})
+            set_status(task_id, {"step": "done", "progress": 100, "message": "Analysis complete", "result": result})
         logger.debug(f"Saved model response to {debug_file}")
         logger.info("Successfully processed content with OpenAI")
         return result
     except Exception as e:
         logger.error(f"Error processing content with OpenAI: {str(e)}")
+        if task_id:
+            set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise
 
-def analyze_url(url, max_pages=1):
+def analyze_url(url, max_pages=1, task_id=None):
     """
     Scrape URL and analyze its content
     """
     logger.info(f"Starting URL analysis for {url}")
     try:
-        content = scrape_url(url, max_pages)
-        
+        content = scrape_url(url, max_pages, task_id=task_id)
         # Only process if we have content
         if not content:
             logger.warning(f"No content found for {url}")
+            if task_id:
+                set_status(task_id, {"step": "error", "progress": 100, "message": "No content found to analyze"})
             return {"error": "No content found to analyze"}, 400
-
         # Generate safe filename
         safe_filename = sanitize_filename(url)
         filename = f"{safe_filename}-{max_pages}_pages.json"
-        
         # Save data with rotation policy
         filepath = save_data_with_rotation(content, filename)
         logger.debug(f"Saved scraped data to {filepath}")
-
-        result = process_content(content)
+        result = process_content(content, task_id=task_id)
         logger.info(f"Successfully completed URL analysis for {url}")
         return result, 200
     except Exception as e:
         logger.error(f"Error analyzing URL {url}: {str(e)}")
+        if task_id:
+            set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise 
 
     

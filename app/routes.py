@@ -1,6 +1,9 @@
 from flask import Blueprint, jsonify, request
 from app.utils import process_content, analyze_url
 from app.logger import setup_logger
+from app.status_store import set_status, get_status
+import uuid
+import threading
 
 # Initialize logger
 logger = setup_logger('routes')
@@ -29,24 +32,9 @@ def analyze_content():
 def analyze_url_endpoint():
     logger.info("Received request to /api/analyze-url")
     try:
-        # Try to get JSON data first
-        try:
-            data = request.get_json()
-        except Exception:
-            # If JSON parsing fails, try to get raw data and parse it
-            raw_data = request.get_data(as_text=True)
-            # Handle JavaScript-style object literal
-            if raw_data and 'url' in raw_data:
-                # Extract URL using string manipulation
-                url_start = raw_data.find('url') + 4
-                url_end = raw_data.find('}', url_start)
-                if url_end == -1:
-                    url_end = len(raw_data)
-                url = raw_data[url_start:url_end].strip().strip('"\'')
-                data = {'url': url}
-            else:
-                data = None
-
+        
+        data = request.get_json()
+        
         if not data or 'url' not in data:
             logger.warning("No URL provided in request")
             return jsonify({'error': 'No URL provided'}), 400
@@ -67,10 +55,20 @@ def analyze_url_endpoint():
         except ValueError:
             logger.warning(f"Invalid max_pages format: {max_pages}")
             return jsonify({'error': 'max_pages must be a valid integer'}), 400
-            
-        result, status_code = analyze_url(url, max_pages)
-        logger.info(f"Successfully analyzed URL: {url}")
-        return jsonify(result), status_code
+        
+        task_id = str(uuid.uuid4())
+        set_status(task_id, {"step": "queued", "progress": 0, "message": "Task queued"})
+
+        def background_task(url, max_pages, task_id):
+            try:
+                analyze_url(url, max_pages, task_id=task_id)
+            except Exception as e:
+                set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
+
+        thread = threading.Thread(target=background_task, args=(url, max_pages, task_id))
+        thread.start()
+
+        return jsonify({"task_id": task_id}), 202
     except Exception as e:
         logger.error(f"Error analyzing URL: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -78,4 +76,12 @@ def analyze_url_endpoint():
 @main.route('/health', methods=['GET'])
 def health_check():
     logger.debug("Health check request received")
-    return jsonify({'status': 'healthy'}) 
+    return jsonify({'status': 'healthy'})
+
+@main.route('/api/analyze-status', methods=['GET'])
+def analyze_status():
+    task_id = request.args.get('task_id')
+    status = get_status(task_id)
+    if status is None:
+        return jsonify({"error": "Task not found"}), 404
+    return jsonify(status) 

@@ -6,7 +6,7 @@ from pyppeteer import launch
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from openai import OpenAI
-from app.prompts import get_analysis_prompt
+from app.prompts import get_analysis_prompt, get_faq_prompt
 from fake_useragent import UserAgent
 import random
 import time
@@ -14,7 +14,7 @@ from app.logger import setup_logger, save_data_with_rotation
 import re
 from datetime import datetime
 import nest_asyncio
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from app.status_store import set_status
 
 # Initialize logger
@@ -249,6 +249,18 @@ def is_content_sufficient(soup):
         
     return True
 
+def prioritize_links(links):
+    priority_keywords = ['price', 'pricing', 'cost', 'plans', 'subscription']
+    prioritized = []
+    others = []
+    for link in links:
+        if any(keyword in link.lower() for keyword in priority_keywords):
+            prioritized.append(link)
+        else:
+            others.append(link)
+    # Prioritize links with keywords by putting them first
+    return prioritized + others
+
 def scrape_url(url, max_pages=1, task_id=None):
     """
     Scrape content from a given URL and its linked pages up to max_pages
@@ -327,7 +339,10 @@ def scrape_url(url, max_pages=1, task_id=None):
                 # Get new links if we haven't reached max_pages
                 if len(visited_urls) < max_pages:
                     new_links = get_links(soup, current_url)
-                    urls_to_visit.update(new_links - visited_urls)
+                    prioritized_links = prioritize_links(new_links - visited_urls)
+                    # Use a list to maintain order, and add prioritized links to the front
+                    urls_to_visit = list(prioritized_links) + list(urls_to_visit)
+                    urls_to_visit = set(urls_to_visit)  # Convert back to set if you want to avoid duplicates
                     logger.debug(f"Added {len(new_links - visited_urls)} new URLs to visit")
                     
             except Exception as e:
@@ -352,6 +367,62 @@ def scrape_url(url, max_pages=1, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise Exception(f"Error in scraping process: {str(e)}")
 
+def build_combined_content(content):
+    formatted_content = []
+    domain = None
+    for page in content:
+        if not domain:
+            parsed_url = urlparse(page['url'])
+            domain = parsed_url.netloc
+            if domain.startswith('www.'):
+                domain = domain[4:]
+        formatted_content.append(f"URL: {page['url']}")
+        formatted_content.append(f"Title: {page['title']}")
+        formatted_content.append(f"Description: {page['description']}")
+        formatted_content.append("Content:")
+        formatted_content.append(page['content'])
+        formatted_content.append("\n---\n")
+    return "\n".join(formatted_content), domain
+
+def call_openai(client, prompt):
+    completion = client.chat.completions.create(
+        extra_body={},
+        model="microsoft/phi-4-reasoning-plus:free",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return completion.choices[0].message.content
+
+
+def escape_unescaped_newlines(json_str):
+    def replacer(match):
+        return match.group(0).replace('\n', '\\n')
+    return re.sub(r'\"(.*?)(?<!\\)\"', replacer, json_str, flags=re.DOTALL)
+
+
+def parse_openai_response(response_content, prefix, task_id=None):
+    """
+    Extract and parse the JSON object that follows the last `prefix` in the model output.
+    Handles common noise like markdown fences or trailing commentary.
+    """
+    try:
+        matches = list(re.finditer(re.escape(prefix), response_content, flags=re.IGNORECASE))
+        if not matches:
+            raise ValueError(f"No '{prefix}' found in the response")
+        m = matches[-1] 
+
+        json_candidate = response_content[m.end():].strip()
+        json_candidate = re.sub(r"```(?:json)?", "", json_candidate).strip()
+
+        json_candidate = escape_unescaped_newlines(json_candidate)
+        return json.loads(json_candidate)
+
+    except Exception as e:
+        logger.error(f"JSON parsing error: {e}")
+        logger.debug(f"Original model output:\n{response_content}")
+        if task_id:
+            set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
+        raise
+
 def process_content(content, task_id=None):
     """
     Process the content using OpenAI API and return the analysis
@@ -361,98 +432,59 @@ def process_content(content, task_id=None):
         if task_id:
             set_status(task_id, {"step": "business_overview", "progress": 33, "message": "Creating business overview"})
         client = get_openai_client()
-        
-        # Convert structured content to text format for the prompt
-        formatted_content = []
-        domain = None
-        
-        for page in content:
-            # Extract domain from the first URL we process
-            if not domain:
-                parsed_url = urlparse(page['url'])
-                domain = parsed_url.netloc
-                if domain.startswith('www.'):
-                    domain = domain[4:]
-            
-            formatted_content.append(f"URL: {page['url']}")
-            formatted_content.append(f"Title: {page['title']}")
-            formatted_content.append(f"Description: {page['description']}")
-            formatted_content.append("Content:")
-            formatted_content.append(page['content'])
-            formatted_content.append("\n---\n")
-        
-        combined_content = "\n".join(formatted_content)
-        prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
-        prompt = prompt.replace("${domain}", domain)
-        
-        logger.debug("Sending request to OpenAI API")
-        if task_id:
-            set_status(task_id, {"step": "services_products", "progress": 50, "message": "Analyzing services & products"})
-        completion = client.chat.completions.create(
-            extra_body={},
-            model="microsoft/phi-4-reasoning-plus:free",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        )
-        
-        # Extract the answer from the response
-        response_content = completion.choices[0].message.content
-        
-        # Save raw response for debugging before processing
+        combined_content, domain = build_combined_content(content)
+        main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content).replace("${domain}", domain)
+        faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
+
+        def main_call():
+            logger.debug("Sending main OpenAI API request")
+            if task_id:
+                set_status(task_id, {"step": "services_products", "progress": 50, "message": "Analyzing services & products"})
+            return call_openai(client, main_prompt)
+
+        def faq_call():
+            logger.debug("Sending FAQ OpenAI API request")
+            return call_openai(client, faq_prompt)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_main = executor.submit(main_call)
+            future_faq = executor.submit(faq_call)
+            main_response = future_main.result()
+            faq_response = future_faq.result()
+
+        # Save raw responses for debugging
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        raw_response_file = save_data_with_rotation(
-            {
-                "raw_response": response_content
-            },
-            "raw_response.json",
-            debug=True
-        )
-        logger.debug(f"Saved raw response to {raw_response_file}")
-        
-        last_index = response_content.lower().rfind("myresponse:")
-        
-        if last_index == -1:
-            logger.error("No 'myresponse:' found in the response")
-            if task_id:
-                set_status(task_id, {"step": "error", "progress": 100, "message": "No 'myresponse:' found in the response"})
-            raise Exception("Invalid response format: No 'myresponse:' found")
-            
-        json_str = response_content[last_index + len("myresponse:"):].strip()
-        
-        # Try to clean the JSON string if it's not valid
         try:
-            # Remove any markdown code block indicators
-            json_str = json_str.replace("```json", "").replace("```", "").strip()
-            result = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {str(e)}")
-            logger.error(f"Raw JSON string: {json_str}")
-            if task_id:
-                set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
-            raise Exception(f"Invalid JSON response: {str(e)}")
-        
+            save_data_with_rotation({"raw_response": main_response}, f"raw_response_main.json", debug=True)
+            save_data_with_rotation({"raw_response": faq_response}, f"raw_response_faq.json", debug=True)
+        except Exception as e:
+            logger.error(f"Failed to save raw response: {e}")
+
+        main_result = parse_openai_response(main_response, "myresponse:", task_id)
+        faq_result = parse_openai_response(faq_response, "myresponse:", task_id)
+
+        # Merge FAQ into main result
+        if "faqs" in faq_result:
+            main_result["faqs"] = faq_result["faqs"]
+
         # Save the model's response for debugging
         debug_file = save_data_with_rotation(
             {
-                "prompt": prompt,
-                "parsed_result": result
+                "prompt": main_prompt,
+                "parsed_result": main_result
             },
             "model_response.json",
             debug=True
         )
-        
+
         if task_id:
             set_status(task_id, {"step": "unique_selling_points", "progress": 66, "message": "Identifying unique selling points"})
             set_status(task_id, {"step": "brand_voice", "progress": 80, "message": "Determining brand voice"})
             set_status(task_id, {"step": "sales_qa", "progress": 90, "message": "Generating sales Q&A"})
-            set_status(task_id, {"step": "done", "progress": 100, "message": "Analysis complete", "result": result})
+            set_status(task_id, {"step": "done", "progress": 100, "message": "Analysis complete", "result": main_result})
         logger.debug(f"Saved model response to {debug_file}")
         logger.info("Successfully processed content with OpenAI")
-        return result
+        return main_result
     except Exception as e:
         logger.error(f"Error processing content with OpenAI: {str(e)}")
         if task_id:
@@ -486,5 +518,3 @@ def analyze_url(url, max_pages=1, task_id=None):
         if task_id:
             set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise 
-
-    

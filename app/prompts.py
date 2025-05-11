@@ -28,6 +28,19 @@ def get_analysis_prompt():
                     "items": { "type": "string" },
                     "description": "Five friendly welcome messages, each ending with a question to spark conversation. Feel free to use ${domain} as a placeholder."
                 }
+
+                "faqs": {
+                    "type": "array",
+                    "description": "At least 10 Q&A pairs visitors are likely to ask. Include pricing questions if any prices are mentioned on the site.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                        "question": { "type": "string" },
+                        "answer":   { "type": "string" }
+                        },
+                        "required": ["question", "answer"]
+                    }
+                }
             },
             "required": [
                 "businessOverview",
@@ -39,7 +52,8 @@ def get_analysis_prompt():
                 "competitiveDifference",
                 "mostProfitableLineItems",
                 "bestSalesLines",
-                "greetings"
+                "greetings",
+                faqs
             ]
         }
 
@@ -52,7 +66,11 @@ def get_analysis_prompt():
             – provide five concise, friendly welcome lines (1 – 2 sentences each),  
             – you *may* insert **${domain}** anywhere to reference the site dynamically. 
         * If the answer is unknown, output an empty string (`""`) or an empty array (`[]`) as appropriate.
-        * Think step by step, but at the end, return only the final answer prefixed with Answer:
+        * For faqs
+            – generate **≥ 10** question–answer pairs the average visitor might ask.  
+            – If any pricing info is present on the page, include **at least two** pricing‑related Q&As.  
+            – Each answer 1‑2 short paragraphs, grounded in the scraped text (no wild guesses).
+        * Think step by step, but at the end, return only the final answer prefixed with MyResponse:
 
         ---SCRAPED TEXT START---
         {{WEBSITE_SCRAPED_CONTENT}}

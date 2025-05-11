@@ -413,15 +413,15 @@ def process_content(content, task_id=None):
         )
         logger.debug(f"Saved raw response to {raw_response_file}")
         
-        last_index = response_content.lower().rfind("answer:")
+        last_index = response_content.lower().rfind("myresponse:")
         
         if last_index == -1:
-            logger.error("No 'answer:' found in the response")
+            logger.error("No 'myresponse:' found in the response")
             if task_id:
-                set_status(task_id, {"step": "error", "progress": 100, "message": "No 'answer:' found in the response"})
-            raise Exception("Invalid response format: No 'answer:' found")
+                set_status(task_id, {"step": "error", "progress": 100, "message": "No 'myresponse:' found in the response"})
+            raise Exception("Invalid response format: No 'myresponse:' found")
             
-        json_str = response_content[last_index + len("answer:"):].strip()
+        json_str = response_content[last_index + len("myresponse:"):].strip()
         
         # Try to clean the JSON string if it's not valid
         try:

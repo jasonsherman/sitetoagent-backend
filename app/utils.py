@@ -410,11 +410,22 @@ def parse_openai_response(response_content, prefix, task_id=None):
             raise ValueError(f"No '{prefix}' found in the response")
         m = matches[-1] 
 
-        json_candidate = response_content[m.end():].strip()
-        json_candidate = re.sub(r"```(?:json)?", "", json_candidate).strip()
+        candidate = response_content[m.end():].strip()
+        candidate = re.sub(r"```(?:json)?|```", "", candidate).strip()
 
-        json_candidate = escape_unescaped_newlines(json_candidate)
-        return json.loads(json_candidate)
+        start = candidate.find("{")
+        end   = candidate.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError("No JSON braces found after prefix")
+
+        json_str = candidate[start:end + 1]
+
+        def _escaper(match):
+            return match.group(0).replace("\n", "\\n")
+        json_str = re.sub(r'"(?:[^"\\]|\\.)*"', _escaper, json_str, flags=re.DOTALL)
+
+        return json.loads(json_str)
+
 
     except Exception as e:
         logger.error(f"JSON parsing error: {e}")

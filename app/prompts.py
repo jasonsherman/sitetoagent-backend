@@ -67,29 +67,26 @@ def get_analysis_prompt():
 def get_faq_prompt():
     return """
         You are an expert site assistant.  
-        Read the text after the line `---SCRAPED TEXT START---` and do **not** copy that text verbatim.
-        Instead, fill the following JSON schema **exactly** (no extra keys, no comments):
 
+        **Task**  
+        Read the text after the marker ---SCRAPED TEXT START--- and craft a JSON object that matches *exactly* the template shown below — no extra keys, no comments.
+
+
+        ### Response template (fill in where indicated)
         {
-            "type": "object",
-            "properties": {
-                "faqs": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "question": { "type": "string" },
-                            "answer": { "type": "string" }
-                        }
-                    }
+        "faqs": [
+                {
+                    "question": "string",
+                    "answer": "string"
                 }
-            }
+                // ← repeat until you have at least 10 items
+            ]
         }
 
 
         Rules:
         • Provide **at least 10** FAQs that real visitors might ask.  
-        • If prices or fees appear in the text, include **at least two** pricing‑related questions.  
+        • If the site mentions any prices/fees, include **≥ 2** pricing‑related Q&As.  
         • Each answer should be 1‑2 paragraphs, strictly based on the supplied content.  
         • Output JSON only—no markdown or commentary.
         • Think step by step, but at the end, return only the final answer prefixed with MyResponse:

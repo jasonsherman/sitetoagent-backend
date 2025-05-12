@@ -57,7 +57,6 @@ def get_analysis_prompt():
             – generate **≥ 10** question–answer pairs the average visitor might ask.  
             – If any pricing info is present on the page, include **at least two** pricing‑related Q&As.  
             – Each answer 1‑2 short paragraphs, grounded in the scraped text (no wild guesses).
-        * All newlines inside string values must be escaped as \\n.
         * Think step by step, but at the end, return only the final answer prefixed with MyResponse:
 
         ---SCRAPED TEXT START---
@@ -68,7 +67,8 @@ def get_analysis_prompt():
 def get_faq_prompt():
     return """
         You are an expert site assistant.  
-        Read the text between ---SCRAPED TEXT START--- and ---SCRAPED TEXT END---, then output exactly the JSON schema.
+        Read the text after the line `---SCRAPED TEXT START---` and do **not** copy that text verbatim.
+        Instead, fill the following JSON schema **exactly** (no extra keys, no comments):
 
         {
             "type": "object",
@@ -79,21 +79,19 @@ def get_faq_prompt():
                         "type": "object",
                         "properties": {
                             "question": { "type": "string" },
-                            "answer":   { "type": "string" }
-                        },
-                    "required": ["question", "answer"]
+                            "answer": { "type": "string" }
+                        }
                     }
                 }
-            },
-            "required": ["faqs"]
+            }
         }
+
 
         Rules:
         • Provide **at least 10** FAQs that real visitors might ask.  
         • If prices or fees appear in the text, include **at least two** pricing‑related questions.  
         • Each answer should be 1‑2 paragraphs, strictly based on the supplied content.  
         • Output JSON only—no markdown or commentary.
-        • All newlines inside string values must be escaped as \\n.
         • Think step by step, but at the end, return only the final answer prefixed with MyResponse:
 
         ---SCRAPED TEXT START---

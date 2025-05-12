@@ -385,19 +385,24 @@ def build_combined_content(content):
     return "\n".join(formatted_content), domain
 
 def call_openai(client, prompt):
-    completion = client.chat.completions.create(
-        extra_body={},
-        model="microsoft/phi-4-reasoning-plus:free",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return completion.choices[0].message.content
-
+    try:
+        completion = client.chat.completions.create(
+            extra_body={},
+            model="microsoft/phi-4-reasoning-plus:free",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        if not completion or not completion.choices:
+            logger.error("OpenAI API returned empty response")
+            raise Exception("Empty response from OpenAI API")
+        return completion.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Error calling OpenAI API: {str(e)}")
+        raise Exception(f"Failed to get response from OpenAI API: {str(e)}")
 
 def escape_unescaped_newlines(json_str):
     def replacer(match):
         return match.group(0).replace('\n', '\\n')
     return re.sub(r'\"(.*?)(?<!\\)\"', replacer, json_str, flags=re.DOTALL)
-
 
 def parse_openai_response(response_content, prefix, task_id=None):
     """
@@ -425,7 +430,6 @@ def parse_openai_response(response_content, prefix, task_id=None):
         json_str = re.sub(r'"(?:[^"\\]|\\.)*"', _escaper, json_str, flags=re.DOTALL)
 
         return json.loads(json_str)
-
 
     except Exception as e:
         logger.error(f"JSON parsing error: {e}")

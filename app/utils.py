@@ -392,9 +392,14 @@ def call_openai(client, prompt):
             model="microsoft/phi-4-reasoning-plus:free",
             messages=[{"role": "user", "content": prompt}]
         )
-        if not completion or not completion.choices:
-            logger.error("OpenAI API returned empty response")
+        if not completion:
+            logger.error("OpenAI API returned None completion object")
+            raise Exception("OpenAI API returned None completion object")
+        
+        if not completion.choices:
+            logger.error(f"OpenAI API returned empty response: {str(completion)}")
             raise Exception("Empty response from OpenAI API")
+        
         return completion.choices[0].message.content
     except Exception as e:
         logger.error(f"Error calling OpenAI API: {str(e)}")

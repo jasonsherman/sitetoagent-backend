@@ -13,6 +13,7 @@ import time
 from app.logger import setup_logger, save_data_with_rotation
 import re
 from datetime import datetime
+import json_repair
 import nest_asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from app.status_store import set_status
@@ -429,7 +430,7 @@ def parse_openai_response(response_content, prefix, task_id=None):
             return match.group(0).replace("\n", "\\n")
         json_str = re.sub(r'"(?:[^"\\]|\\.)*"', _escaper, json_str, flags=re.DOTALL)
 
-        return json.loads(json_str)
+        return json_repair.loads(json_str)
 
     except Exception as e:
         logger.error(f"JSON parsing error: {e}")

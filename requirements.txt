@@ -14,6 +14,7 @@ httpcore==1.0.9
 httpx==0.28.1
 idna==3.10
 jiter==0.9.0
+json_repair==0.44.1
 nest-asyncio==1.6.0
 openai==1.77.0
 pyppeteer==1.0.2

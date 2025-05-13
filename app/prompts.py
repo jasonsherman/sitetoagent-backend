@@ -53,10 +53,6 @@ def get_analysis_prompt():
             – provide five concise, friendly welcome lines (1 – 2 sentences each),  
             – you *may* insert **${domain}** anywhere to reference the site dynamically. 
         * If the answer is unknown, output an empty string (`""`) or an empty array (`[]`) as appropriate.
-        * For faqs
-            – generate **≥ 10** question–answer pairs the average visitor might ask.  
-            – If any pricing info is present on the page, include **at least two** pricing‑related Q&As.  
-            – Each answer 1‑2 short paragraphs, grounded in the scraped text (no wild guesses).
         * Think step by step, but at the end, return only the final answer prefixed with MyResponse:
 
         ---SCRAPED TEXT START---

@@ -477,6 +477,50 @@ def parse_openai_response(response_content, prefix, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
         raise
 
+def compress_content(content, max_tokens=30000):
+    """
+    Compress content using a middle-out strategy to fit within token limits
+    while preserving the most important information from the beginning and end
+    """
+    # Rough estimation: 1 token ≈ 4 characters
+    max_chars = max_tokens * 4
+    
+    if len(content) <= max_chars:
+        return content
+        
+    # Split content into sections
+    sections = content.split('\n---\n')
+    
+    if len(sections) <= 1:
+        # If no clear sections, split by newlines
+        lines = content.split('\n')
+        if len(lines) <= 2:
+            # If very short, just truncate
+            return content[:max_chars] + "..."
+            
+        # Keep first and last 20% of lines, compress middle
+        keep_lines = int(len(lines) * 0.2)
+        compressed = (
+            '\n'.join(lines[:keep_lines]) + 
+            '\n... [Content compressed] ...\n' +
+            '\n'.join(lines[-keep_lines:])
+        )
+        return compressed
+    
+    # For multiple sections, keep first and last sections, compress middle
+    keep_sections = max(1, int(len(sections) * 0.2))
+    compressed = (
+        '\n---\n'.join(sections[:keep_sections]) +
+        '\n---\n... [Content compressed] ...\n---\n' +
+        '\n---\n'.join(sections[-keep_sections:])
+    )
+    
+    # If still too long, truncate
+    if len(compressed) > max_chars:
+        return compressed[:max_chars] + "..."
+        
+    return compressed
+
 def process_content(content, task_id=None):
     """
     Process the content using OpenAI API and return the analysis
@@ -487,8 +531,14 @@ def process_content(content, task_id=None):
             set_status(task_id, {"step": "business_overview", "progress": 33, "message": "Creating business overview"})
         client = get_openai_client()
         combined_content, domain = build_combined_content(content)
-        main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content).replace("${domain}", domain)
-        faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
+        
+        # Compress content if needed
+        compressed_content = compress_content(combined_content)
+        if len(compressed_content) < len(combined_content):
+            logger.warning(f"Content compressed from {len(combined_content)} to {len(compressed_content)} characters")
+            
+        main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", compressed_content).replace("${domain}", domain)
+        faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", compressed_content)
 
         def main_call():
             logger.debug("Sending main OpenAI API request")

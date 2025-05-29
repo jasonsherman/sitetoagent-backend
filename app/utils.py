@@ -25,7 +25,7 @@ logger = setup_logger('utils')
 nest_asyncio.apply()
 
 # Constants
-MAX_CONTENT_LENGTH = 100000  # Maximum content length in characters
+MAX_CONTENT_LENGTH = 80000  # Maximum content length in characters
 PYPPETEER_EXECUTOR = ProcessPoolExecutor(max_workers=1)  # Single worker for Pyppeteer
 
 def _fetch_with_pyppeteer_process(url):

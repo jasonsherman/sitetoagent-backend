@@ -262,6 +262,31 @@ def prioritize_links(links):
     # Prioritize links with keywords by putting them first
     return prioritized + others
 
+def trim_content(content, max_length):
+    """
+    Trim content to fit within max_length while preserving structure
+    """
+    if len(content) <= max_length:
+        return content
+        
+    # Split content into lines to preserve structure
+    lines = content.split('\n')
+    trimmed_lines = []
+    current_length = 0
+    
+    for line in lines:
+        if current_length + len(line) + 1 <= max_length:  # +1 for newline
+            trimmed_lines.append(line)
+            current_length += len(line) + 1
+        else:
+            # If we can't fit the whole line, try to fit part of it
+            remaining_length = max_length - current_length
+            if remaining_length > 20:  # Only add partial line if we have enough space
+                trimmed_lines.append(line[:remaining_length] + "...")
+            break
+    
+    return '\n'.join(trimmed_lines)
+
 def scrape_url(url, max_pages=1, task_id=None):
     """
     Scrape content from a given URL and its linked pages up to max_pages
@@ -322,7 +347,15 @@ def scrape_url(url, max_pages=1, task_id=None):
                 
                 # Only add content if it's not empty
                 if structured_data['content'].strip():
-                    # Check if adding this content would exceed the limit
+                    # If this is the first page and content exceeds MAX_CONTENT_LENGTH, trim it
+                    if len(visited_urls) == 0 and current_content_length > MAX_CONTENT_LENGTH:
+                        logger.warning(f"First page content exceeds MAX_CONTENT_LENGTH, trimming content")
+                        # Calculate how much content we can keep
+                        available_length = MAX_CONTENT_LENGTH - len(structured_data['description'])
+                        structured_data['content'] = trim_content(structured_data['content'], available_length)
+                        current_content_length = len(structured_data['content']) + len(structured_data['description'])
+                    
+                    # Check if adding this content would exceed the limit for subsequent pages
                     if total_content_length + current_content_length > MAX_CONTENT_LENGTH:
                         logger.warning(f"Content length limit reached ({total_content_length} + {current_content_length} > {MAX_CONTENT_LENGTH}). Skipping remaining pages.")
                         break

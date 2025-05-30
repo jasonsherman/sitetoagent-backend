@@ -499,58 +499,64 @@ def estimate_tokens(text):
     total_tokens = latin_tokens + japanese_tokens + chinese_tokens + korean_tokens + other_tokens
     return int(total_tokens)
 
-def compress_content(content, max_tokens=30000):
+def compress_content(content, max_tokens=30000, iteration=0):
     """
     Compress content using a middle-out strategy to fit within token limits
-    while preserving the most important information from the beginning and end
+    while preserving the most important information from the beginning and end.
+    Iterates compression if necessary.
     """
-    # First estimate tokens in the content
+    if iteration > 5: # Prevent infinite recursion
+        logger.error("Compression failed after 5 iterations.")
+        # As a last resort, simply truncate the content if compression fails
+        # Estimate a very conservative character limit
+        conservative_char_limit = max_tokens * 0.8 # Assume average 1.25 tokens/char in worst case
+        return content[:int(conservative_char_limit)] + "... [Truncated due to compression failure]..."
+
     estimated_tokens = estimate_tokens(content)
     
     if estimated_tokens <= max_tokens:
         return content
         
-    # Calculate compression ratio needed
+    logger.warning(f"Attempting compression iteration {iteration+1}. Estimated tokens: {estimated_tokens}, Max tokens: {max_tokens}")
+
+    # Calculate compression ratio needed based on estimated tokens
     compression_ratio = max_tokens / estimated_tokens
-    
-    # Split content into sections
+
+    # Adjust keep ratio based on iteration - compress more aggressively on subsequent attempts
+    base_keep_ratio = 0.5 # Keep 50% of lines/sections initially (25% start, 25% end)
+    adjusted_keep_ratio = base_keep_ratio * (0.8 ** iteration) # Reduce keep ratio by 20% each iteration
+    adjusted_keep_ratio = max(0.1, adjusted_keep_ratio) # Don't go below keeping 10% total
+
+
     sections = content.split('\n---\n')
     
     if len(sections) <= 1:
-        # If no clear sections, split by newlines
         lines = content.split('\n')
         if len(lines) <= 2:
-            # If very short, compress proportionally
             target_length = int(len(content) * compression_ratio)
-            return content[:target_length] + "..."
-            
-        # Keep proportional amount of lines from start and end
-        keep_lines = max(1, int(len(lines) * compression_ratio * 0.5))  # Split between start and end
+            compressed = content[:target_length] + "..."
+        else:
+            keep_lines = max(1, int(len(lines) * adjusted_keep_ratio))
+            compressed = (
+                '\n'.join(lines[:keep_lines]) + 
+                '\n... [Content compressed (iter {iteration+1})] ...\n' +
+                '\n'.join(lines[-keep_lines:])
+            )
+    else:
+        keep_sections = max(1, int(len(sections) * adjusted_keep_ratio))
         compressed = (
-            '\n'.join(lines[:keep_lines]) + 
-            '\n... [Content compressed] ...\n' +
-            '\n'.join(lines[-keep_lines:])
+            '\n---\n'.join(sections[:keep_sections]) +
+            '\n---\n... [Content compressed (iter {iteration+1})] ...\n---\n' +
+            '\n---\n'.join(sections[-keep_sections:])
         )
-        
-        # Verify token count after compression
-        if estimate_tokens(compressed) > max_tokens:
-            # If still too many tokens, compress further
-            return compress_content(compressed, max_tokens)
-        return compressed
     
-    # For multiple sections, keep proportional amount of sections
-    keep_sections = max(1, int(len(sections) * compression_ratio * 0.5))  # Split between start and end
-    compressed = (
-        '\n---\n'.join(sections[:keep_sections]) +
-        '\n---\n... [Content compressed] ...\n---\n' +
-        '\n---\n'.join(sections[-keep_sections:])
-    )
-    
-    # Verify token count after compression
-    if estimate_tokens(compressed) > max_tokens:
-        # If still too many tokens, compress further
-        return compress_content(compressed, max_tokens)
-        
+    # Recursively call compress_content if the estimated tokens are still too high
+    # This handles cases where the initial estimation or compression ratio is not perfect
+    estimated_tokens_after_compression = estimate_tokens(compressed)
+    if estimated_tokens_after_compression > max_tokens:
+        logger.warning(f"Still over token limit after compression (iter {iteration+1}). Estimated: {estimated_tokens_after_compression}. Compressing further.")
+        return compress_content(compressed, max_tokens, iteration + 1)
+
     return compressed
 
 def process_content(content, task_id=None):

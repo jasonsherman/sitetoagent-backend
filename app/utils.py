@@ -477,17 +477,42 @@ def parse_openai_response(response_content, prefix, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
         raise
 
+def estimate_tokens(text):
+    """
+    Estimate the number of tokens in text, accounting for different languages
+    """
+    # Count characters by script type
+    latin_chars = len(re.findall(r'[a-zA-Z]', text))
+    japanese_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text))  # Hiragana, Katakana, Kanji
+    chinese_chars = len(re.findall(r'[\u4E00-\u9FFF]', text))  # Chinese characters
+    korean_chars = len(re.findall(r'[\uAC00-\uD7AF\u1100-\u11FF]', text))  # Hangul
+    other_chars = len(text) - latin_chars - japanese_chars - chinese_chars - korean_chars
+    
+    # Estimate tokens based on character type
+    # These ratios are approximate and may need adjustment
+    latin_tokens = latin_chars / 4  # ~4 chars per token for Latin script
+    japanese_tokens = japanese_chars * 1.3  # ~1.3 tokens per Japanese char
+    chinese_tokens = chinese_chars * 1.3  # ~1.3 tokens per Chinese char
+    korean_tokens = korean_chars * 1.3  # ~1.3 tokens per Korean char
+    other_tokens = other_chars / 4  # Default to Latin ratio for other chars
+    
+    total_tokens = latin_tokens + japanese_tokens + chinese_tokens + korean_tokens + other_tokens
+    return int(total_tokens)
+
 def compress_content(content, max_tokens=30000):
     """
     Compress content using a middle-out strategy to fit within token limits
     while preserving the most important information from the beginning and end
     """
-    # Rough estimation: 1 token ≈ 4 characters
-    max_chars = max_tokens * 4
+    # First estimate tokens in the content
+    estimated_tokens = estimate_tokens(content)
     
-    if len(content) <= max_chars:
+    if estimated_tokens <= max_tokens:
         return content
         
+    # Calculate compression ratio needed
+    compression_ratio = max_tokens / estimated_tokens
+    
     # Split content into sections
     sections = content.split('\n---\n')
     
@@ -495,29 +520,36 @@ def compress_content(content, max_tokens=30000):
         # If no clear sections, split by newlines
         lines = content.split('\n')
         if len(lines) <= 2:
-            # If very short, just truncate
-            return content[:max_chars] + "..."
+            # If very short, compress proportionally
+            target_length = int(len(content) * compression_ratio)
+            return content[:target_length] + "..."
             
-        # Keep first and last 20% of lines, compress middle
-        keep_lines = int(len(lines) * 0.2)
+        # Keep proportional amount of lines from start and end
+        keep_lines = max(1, int(len(lines) * compression_ratio * 0.5))  # Split between start and end
         compressed = (
             '\n'.join(lines[:keep_lines]) + 
             '\n... [Content compressed] ...\n' +
             '\n'.join(lines[-keep_lines:])
         )
+        
+        # Verify token count after compression
+        if estimate_tokens(compressed) > max_tokens:
+            # If still too many tokens, compress further
+            return compress_content(compressed, max_tokens)
         return compressed
     
-    # For multiple sections, keep first and last sections, compress middle
-    keep_sections = max(1, int(len(sections) * 0.2))
+    # For multiple sections, keep proportional amount of sections
+    keep_sections = max(1, int(len(sections) * compression_ratio * 0.5))  # Split between start and end
     compressed = (
         '\n---\n'.join(sections[:keep_sections]) +
         '\n---\n... [Content compressed] ...\n---\n' +
         '\n---\n'.join(sections[-keep_sections:])
     )
     
-    # If still too long, truncate
-    if len(compressed) > max_chars:
-        return compressed[:max_chars] + "..."
+    # Verify token count after compression
+    if estimate_tokens(compressed) > max_tokens:
+        # If still too many tokens, compress further
+        return compress_content(compressed, max_tokens)
         
     return compressed
 
@@ -535,7 +567,9 @@ def process_content(content, task_id=None):
         # Compress content if needed
         compressed_content = compress_content(combined_content)
         if len(compressed_content) < len(combined_content):
-            logger.warning(f"Content compressed from {len(combined_content)} to {len(compressed_content)} characters")
+            original_tokens = estimate_tokens(combined_content)
+            compressed_tokens = estimate_tokens(compressed_content)
+            logger.warning(f"Content compressed from {original_tokens} to {compressed_tokens} tokens")
             
         main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", compressed_content).replace("${domain}", domain)
         faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", compressed_content)

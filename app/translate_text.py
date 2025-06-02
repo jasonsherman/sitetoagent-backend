@@ -1,13 +1,7 @@
-from google.cloud import translate_v2 as translate
-from langdetect import detect, LangDetectException
 import os
 import json
-
-# Get credentials from environment variable
-credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-if not credentials_path:
-    raise ValueError("GOOGLE_APPLICATION_CREDENTIALS environment variable is not set")
-
+from google.cloud import translate_v2 as translate
+from langdetect import detect, LangDetectException
 # Initialize the client
 translate_client = translate.Client()
 

@@ -17,6 +17,7 @@ import json_repair
 import nest_asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from app.status_store import set_status
+from app.translate_text import translate_large_text_if_japanese, translate_data_to_japanese
 
 # Initialize logger
 logger = setup_logger('utils')
@@ -155,7 +156,7 @@ def is_valid_url(url):
 
 def extract_structured_content(soup, url):
     """
-    Extract structured content from the page
+    Extract structured content from the page and translate if Japanese
     """
     try:
         # Initialize content structure
@@ -181,7 +182,7 @@ def extract_structured_content(soup, url):
                 content_parts.append(f"{element_type}: {text}")
         
         # Combine all content with newlines
-        content = '\n'.join(filter(None, content_parts))
+        content = translate_large_text_if_japanese('\n'.join(filter(None, content_parts)))
         
         # Create structured data
         structured_data = {
@@ -420,6 +421,7 @@ def build_combined_content(content):
 
 def call_openai(client, prompt):
     try:
+        logger.info(f"Prompt length: {len(prompt)}")
         completion = client.chat.completions.create(
             extra_body={},
             model="microsoft/phi-4-reasoning-plus:free",
@@ -477,91 +479,13 @@ def parse_openai_response(response_content, prefix, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
         raise
 
-def estimate_tokens(text):
-    """
-    Estimate the number of tokens in text, accounting for different languages
-    """
-    # Count characters by script type
-    latin_chars = len(re.findall(r'[a-zA-Z]', text))
-    japanese_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text))  # Hiragana, Katakana, Kanji
-    chinese_chars = len(re.findall(r'[\u4E00-\u9FFF]', text))  # Chinese characters
-    korean_chars = len(re.findall(r'[\uAC00-\uD7AF\u1100-\u11FF]', text))  # Hangul
-    other_chars = len(text) - latin_chars - japanese_chars - chinese_chars - korean_chars
-    
-    # Estimate tokens based on character type
-    # These ratios are approximate and may need adjustment
-    latin_tokens = latin_chars / 4  # ~4 chars per token for Latin script
-    japanese_tokens = japanese_chars * 1.3  # ~1.3 tokens per Japanese char
-    chinese_tokens = chinese_chars * 1.3  # ~1.3 tokens per Chinese char
-    korean_tokens = korean_chars * 1.3  # ~1.3 tokens per Korean char
-    other_tokens = other_chars / 4  # Default to Latin ratio for other chars
-    
-    total_tokens = latin_tokens + japanese_tokens + chinese_tokens + korean_tokens + other_tokens
-    return int(total_tokens)
-
-def compress_content(content, max_tokens=30000, iteration=0):
-    """
-    Compress content using a middle-out strategy to fit within token limits
-    while preserving the most important information from the beginning and end.
-    Iterates compression if necessary.
-    """
-    if iteration > 5: # Prevent infinite recursion
-        logger.error("Compression failed after 5 iterations.")
-        # As a last resort, simply truncate the content if compression fails
-        # Estimate a very conservative character limit
-        conservative_char_limit = max_tokens * 0.8 # Assume average 1.25 tokens/char in worst case
-        return content[:int(conservative_char_limit)] + "... [Truncated due to compression failure]..."
-
-    estimated_tokens = estimate_tokens(content)
-    
-    if estimated_tokens <= max_tokens:
-        return content
-        
-    logger.warning(f"Attempting compression iteration {iteration+1}. Estimated tokens: {estimated_tokens}, Max tokens: {max_tokens}")
-
-    # Calculate compression ratio needed based on estimated tokens
-    compression_ratio = max_tokens / estimated_tokens
-
-    # Adjust keep ratio based on iteration - compress more aggressively on subsequent attempts
-    base_keep_ratio = 0.5 # Keep 50% of lines/sections initially (25% start, 25% end)
-    adjusted_keep_ratio = base_keep_ratio * (0.8 ** iteration) # Reduce keep ratio by 20% each iteration
-    adjusted_keep_ratio = max(0.1, adjusted_keep_ratio) # Don't go below keeping 10% total
-
-
-    sections = content.split('\n---\n')
-    
-    if len(sections) <= 1:
-        lines = content.split('\n')
-        if len(lines) <= 2:
-            target_length = int(len(content) * compression_ratio)
-            compressed = content[:target_length] + "..."
-        else:
-            keep_lines = max(1, int(len(lines) * adjusted_keep_ratio))
-            compressed = (
-                '\n'.join(lines[:keep_lines]) + 
-                '\n... [Content compressed (iter {iteration+1})] ...\n' +
-                '\n'.join(lines[-keep_lines:])
-            )
-    else:
-        keep_sections = max(1, int(len(sections) * adjusted_keep_ratio))
-        compressed = (
-            '\n---\n'.join(sections[:keep_sections]) +
-            '\n---\n... [Content compressed (iter {iteration+1})] ...\n---\n' +
-            '\n---\n'.join(sections[-keep_sections:])
-        )
-    
-    # Recursively call compress_content if the estimated tokens are still too high
-    # This handles cases where the initial estimation or compression ratio is not perfect
-    estimated_tokens_after_compression = estimate_tokens(compressed)
-    if estimated_tokens_after_compression > max_tokens:
-        logger.warning(f"Still over token limit after compression (iter {iteration+1}). Estimated: {estimated_tokens_after_compression}. Compressing further.")
-        return compress_content(compressed, max_tokens, iteration + 1)
-
-    return compressed
-
-def process_content(content, task_id=None):
+def process_content(content, task_id=None, response_language='en'):
     """
     Process the content using OpenAI API and return the analysis
+    Args:
+        content: The content to process
+        task_id: Optional task ID for status updates
+        response_language: Language for the response ('en' or 'ja')
     """
     logger.info("Starting content processing with OpenAI")
     try:
@@ -611,6 +535,11 @@ def process_content(content, task_id=None):
         if "faqs" in faq_result:
             main_result["faqs"] = faq_result["faqs"]
 
+
+        if response_language == 'ja':
+            logger.info("Translating data to Japanese")
+            main_result = translate_data_to_japanese(main_result)
+
         # Save the model's response for debugging
         debug_file = save_data_with_rotation(
             {
@@ -635,9 +564,14 @@ def process_content(content, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise
 
-def analyze_url(url, max_pages=1, task_id=None):
+def analyze_url(url, max_pages=1, task_id=None, response_language='en'):
     """
     Scrape URL and analyze its content
+    Args:
+        url: The URL to analyze
+        max_pages: Maximum number of pages to scrape
+        task_id: Optional task ID for status updates
+        response_language: Language for the response ('en' or 'ja')
     """
     logger.info(f"Starting URL analysis for {url}")
     try:
@@ -654,7 +588,7 @@ def analyze_url(url, max_pages=1, task_id=None):
         # Save data with rotation policy
         filepath = save_data_with_rotation(content, filename)
         logger.debug(f"Saved scraped data to {filepath}")
-        result = process_content(content, task_id=task_id)
+        result = process_content(content, task_id=task_id, response_language=response_language)
         logger.info(f"Successfully completed URL analysis for {url}")
         return result, 200
     except Exception as e:

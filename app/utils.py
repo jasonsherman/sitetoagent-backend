@@ -17,6 +17,7 @@ import json_repair
 import nest_asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from app.status_store import set_status
+from app.translate_text import translate_large_text_if_japanese, translate_data_to_japanese
 
 # Initialize logger
 logger = setup_logger('utils')
@@ -155,7 +156,7 @@ def is_valid_url(url):
 
 def extract_structured_content(soup, url):
     """
-    Extract structured content from the page
+    Extract structured content from the page and translate if Japanese
     """
     try:
         # Initialize content structure
@@ -181,7 +182,7 @@ def extract_structured_content(soup, url):
                 content_parts.append(f"{element_type}: {text}")
         
         # Combine all content with newlines
-        content = '\n'.join(filter(None, content_parts))
+        content = translate_large_text_if_japanese('\n'.join(filter(None, content_parts)))
         
         # Create structured data
         structured_data = {
@@ -387,6 +388,7 @@ def build_combined_content(content):
 
 def call_openai(client, prompt):
     try:
+        logger.info(f"Prompt length: {len(prompt)}")
         completion = client.chat.completions.create(
             extra_body={},
             model="microsoft/phi-4-reasoning-plus:free",
@@ -444,9 +446,13 @@ def parse_openai_response(response_content, prefix, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
         raise
 
-def process_content(content, task_id=None):
+def process_content(content, task_id=None, response_language='en'):
     """
     Process the content using OpenAI API and return the analysis
+    Args:
+        content: The content to process
+        task_id: Optional task ID for status updates
+        response_language: Language for the response ('en' or 'ja')
     """
     logger.info("Starting content processing with OpenAI")
     try:
@@ -488,6 +494,11 @@ def process_content(content, task_id=None):
         if "faqs" in faq_result:
             main_result["faqs"] = faq_result["faqs"]
 
+
+        if response_language == 'ja':
+            logger.info("Translating data to Japanese")
+            main_result = translate_data_to_japanese(main_result)
+
         # Save the model's response for debugging
         debug_file = save_data_with_rotation(
             {
@@ -512,9 +523,14 @@ def process_content(content, task_id=None):
             set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise
 
-def analyze_url(url, max_pages=1, task_id=None):
+def analyze_url(url, max_pages=1, task_id=None, response_language='en'):
     """
     Scrape URL and analyze its content
+    Args:
+        url: The URL to analyze
+        max_pages: Maximum number of pages to scrape
+        task_id: Optional task ID for status updates
+        response_language: Language for the response ('en' or 'ja')
     """
     logger.info(f"Starting URL analysis for {url}")
     try:
@@ -531,7 +547,7 @@ def analyze_url(url, max_pages=1, task_id=None):
         # Save data with rotation policy
         filepath = save_data_with_rotation(content, filename)
         logger.debug(f"Saved scraped data to {filepath}")
-        result = process_content(content, task_id=task_id)
+        result = process_content(content, task_id=task_id, response_language=response_language)
         logger.info(f"Successfully completed URL analysis for {url}")
         return result, 200
     except Exception as e:

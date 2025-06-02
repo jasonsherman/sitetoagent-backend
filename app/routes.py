@@ -32,7 +32,6 @@ def analyze_content():
 def analyze_url_endpoint():
     logger.info("Received request to /api/analyze-url")
     try:
-        
         data = request.get_json()
         
         if not data or 'url' not in data:
@@ -41,8 +40,14 @@ def analyze_url_endpoint():
             
         url = data['url']
         max_pages = data.get('max_pages', 4)  # Default to 4 if not specified
+        response_language = data.get('response_language', 'en')  # Default to English if not specified
         
-        logger.debug(f"URL: {url}, max_pages: {max_pages}")
+        # Validate response_language
+        if response_language not in ['en', 'ja']:
+            logger.warning(f"Invalid response_language: {response_language}")
+            return jsonify({'error': 'response_language must be either "en" or "ja"'}), 400
+        
+        logger.debug(f"URL: {url}, max_pages: {max_pages}, response_language: {response_language}")
         # Validate max_pages
         try:
             max_pages = int(max_pages)
@@ -59,13 +64,13 @@ def analyze_url_endpoint():
         task_id = str(uuid.uuid4())
         set_status(task_id, {"step": "queued", "progress": 0, "message": "Task queued"})
 
-        def background_task(url, max_pages, task_id):
+        def background_task(url, max_pages, task_id, response_language):
             try:
-                analyze_url(url, max_pages, task_id=task_id)
+                analyze_url(url, max_pages, task_id=task_id, response_language=response_language)
             except Exception as e:
                 set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
 
-        thread = threading.Thread(target=background_task, args=(url, max_pages, task_id))
+        thread = threading.Thread(target=background_task, args=(url, max_pages, task_id, response_language))
         thread.start()
 
         return jsonify({"task_id": task_id}), 202

@@ -90,3 +90,7 @@ coverage.xml
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Google Cloud credentials
+site-to-agent-69c06280f316.json
+*.json

@@ -21,8 +21,8 @@ def translate_large_text_if_japanese(text, target_lang='en'):
     translate_client = get_translate_client()
     lang = detect(text)
     print(f"Detected language: {lang}")
-    if lang != 'ja':
-        print("Content is not Japanese, returning original.")
+    if lang == 'en':
+        print("Content is already english, returning original.")
         return text 
     # return text
     # Now translate

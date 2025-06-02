@@ -18,5 +18,6 @@ if not os.path.exists(json_path):
         f.write(json_content)
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = json_path
 
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000) 

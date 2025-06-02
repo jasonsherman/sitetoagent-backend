@@ -2,8 +2,10 @@ import os
 import json
 from google.cloud import translate_v2 as translate
 from langdetect import detect, LangDetectException
-# Initialize the client
-translate_client = translate.Client()
+
+
+def get_translate_client():
+    return translate.Client()
 
 def is_english(text):
     """Detect if text is in English (or at least, not Japanese)."""
@@ -16,6 +18,7 @@ def is_english(text):
 
 def translate_large_text_if_japanese(text, target_lang='en'):
     # Check the language first!
+    translate_client = get_translate_client()
     lang = detect(text)
     print(f"Detected language: {lang}")
     if lang != 'ja':
@@ -33,6 +36,7 @@ def translate_large_text_if_japanese(text, target_lang='en'):
 
 def translate_large_text(text, source_language='en', target_lang='ja'):
     # Google API supports up to 30,000 characters per request
+    translate_client = get_translate_client()
     CHUNK_SIZE = 30000
     translated_chunks = []
     for start in range(0, len(text), CHUNK_SIZE):
@@ -44,6 +48,7 @@ def translate_large_text(text, source_language='en', target_lang='ja'):
 
 def translate_text(text, target='ja'):
     """Translate a string to the target language (Japanese)."""
+    translate_client = get_translate_client()
     # Safety: Only translate if text is detected as English
     if not text or not isinstance(text, str):
         return text

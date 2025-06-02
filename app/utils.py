@@ -494,15 +494,9 @@ def process_content(content, task_id=None, response_language='en'):
         client = get_openai_client()
         combined_content, domain = build_combined_content(content)
         
-        # Compress content if needed
-        compressed_content = compress_content(combined_content)
-        if len(compressed_content) < len(combined_content):
-            original_tokens = estimate_tokens(combined_content)
-            compressed_tokens = estimate_tokens(compressed_content)
-            logger.warning(f"Content compressed from {original_tokens} to {compressed_tokens} tokens")
             
-        main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", compressed_content).replace("${domain}", domain)
-        faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", compressed_content)
+        main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content).replace("${domain}", domain)
+        faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
 
         def main_call():
             logger.debug("Sending main OpenAI API request")

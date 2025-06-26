@@ -60,7 +60,6 @@ def _fetch_with_pyppeteer_process(url):
                     await browser.close()
                 except:
                     pass
-
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -161,14 +160,11 @@ def extract_structured_content(soup, url):
     try:
         # Initialize content structure
         content_parts = []
-        
         # Extract title
         title = soup.title.string if soup.title else ""
-        
         # Extract meta description
         meta_desc = soup.find('meta', attrs={'name': 'description'})
         description = meta_desc['content'] if meta_desc else ""
-        
         # Extract main content in sequence
         for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'li', 'span']):
             if element.name in ['ul', 'ol']:
@@ -180,10 +176,8 @@ def extract_structured_content(soup, url):
                 # Add element type as prefix for better context
                 element_type = element.name.upper()
                 content_parts.append(f"{element_type}: {text}")
-        
         # Combine all content with newlines
-        content = translate_large_text_if_japanese('\n'.join(filter(None, content_parts)))
-        
+        content = translate_large_text_if_japanese('\n'.join(filter(None, content_parts)))  
         # Create structured data
         structured_data = {
             "url": url,
@@ -191,7 +185,6 @@ def extract_structured_content(soup, url):
             "description": description,
             "content": content
         }
-        
         logger.debug(f"Extracted structured content from {url}")
         return structured_data
         
@@ -239,16 +232,13 @@ def is_content_sufficient(soup):
     # Check for common indicators of insufficient content
     if not soup.title:
         return False
-        
     # Check if main content elements exist
     main_content = soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'li', 'span'])
     if len(main_content) < 3:  # If we have very few content elements
         return False
-        
     # Check for common JavaScript-rendered content patterns
     if soup.find('div', {'id': 'root'}) and not soup.find('div', {'id': 'root'}).get_text(strip=True):
         return False
-        
     return True
 
 def prioritize_links(links):
@@ -424,7 +414,9 @@ def call_openai(client, prompt):
         logger.info(f"Prompt length: {len(prompt)}")
         completion = client.chat.completions.create(
             extra_body={},
-            model="microsoft/phi-4-reasoning-plus:free",
+            # model="microsoft/phi-4-reasoning-plus:free",
+            # model="qwen/qwen3-235b-a22b:free",
+            model="mistralai/mistral-small-3.2-24b-instruct:free",
             messages=[{"role": "user", "content": prompt}]
         )
         if not completion:
@@ -445,19 +437,21 @@ def escape_unescaped_newlines(json_str):
         return match.group(0).replace('\n', '\\n')
     return re.sub(r'\"(.*?)(?<!\\)\"', replacer, json_str, flags=re.DOTALL)
 
-def parse_openai_response(response_content, prefix, task_id=None):
+def parse_openai_response(response_content, prefix=None, task_id=None):
     """
     Extract and parse the JSON object that follows the last `prefix` in the model output.
     Handles common noise like markdown fences or trailing commentary.
     """
+    orig_content = response_content
     try:
-        matches = list(re.finditer(re.escape(prefix), response_content, flags=re.IGNORECASE))
-        if not matches:
-            raise ValueError(f"No '{prefix}' found in the response")
-        m = matches[-1] 
+        if prefix:
+            matches = list(re.finditer(re.escape(prefix), response_content, flags=re.IGNORECASE))
+            if not matches:
+                raise ValueError(f"No '{prefix}' found in the response")
+            m = matches[-1] 
+            response_content = response_content[m.end():].strip()
 
-        candidate = response_content[m.end():].strip()
-        candidate = re.sub(r"```(?:json)?|```", "", candidate).strip()
+        candidate = re.sub(r"```(?:json)?|```", "", response_content).strip()
 
         start = candidate.find("{")
         end   = candidate.rfind("}")
@@ -474,10 +468,11 @@ def parse_openai_response(response_content, prefix, task_id=None):
 
     except Exception as e:
         logger.error(f"JSON parsing error: {e}")
-        logger.debug(f"Original model output:\n{response_content}")
+        logger.debug(f"Original model output:\n{orig_content}")
         if task_id:
             set_status(task_id, {"step": "error", "progress": 100, "message": f"Invalid JSON response: {str(e)}"})
         raise
+
 
 def process_content(content, task_id=None, response_language='en'):
     """
@@ -522,8 +517,11 @@ def process_content(content, task_id=None, response_language='en'):
         except Exception as e:
             logger.error(f"Failed to save raw response: {e}")
 
-        main_result = parse_openai_response(main_response, "myresponse:", task_id)
-        faq_result = parse_openai_response(faq_response, "myresponse:", task_id)
+        main_result = parse_openai_response(main_response, None, task_id)
+        faq_result = parse_openai_response(faq_response, None, task_id)
+
+        # main_result = parse_openai_response(main_response, "myresponse:", task_id)
+        # faq_result = parse_openai_response(faq_response, "myresponse:", task_id)
 
         # Merge FAQ into main result
         if "faqs" in faq_result:

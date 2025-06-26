@@ -53,7 +53,6 @@ def get_analysis_prompt():
             – provide five concise, friendly welcome lines (1 – 2 sentences each),  
             – you *may* insert **${domain}** anywhere to reference the site dynamically. 
         * If the answer is unknown, output an empty string (`""`) or an empty array (`[]`) as appropriate.
-        * Think step by step, but at the end, return only the final answer prefixed with MyResponse:
 
         ---SCRAPED TEXT START---
         {{WEBSITE_SCRAPED_CONTENT}}
@@ -85,7 +84,6 @@ def get_faq_prompt():
         • If the site mentions any prices/fees, include **≥ 2** pricing‑related Q&As.  
         • Each answer should be 1‑2 paragraphs, strictly based on the supplied content.  
         • Output JSON only—no markdown or commentary.
-        • Think step by step, but at the end, return only the final answer prefixed with MyResponse:
 
         ---SCRAPED TEXT START---
         {{WEBSITE_SCRAPED_CONTENT}}

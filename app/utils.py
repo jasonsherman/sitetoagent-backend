@@ -409,28 +409,50 @@ def build_combined_content(content):
         formatted_content.append("\n---\n")
     return "\n".join(formatted_content), domain
 
-def call_openai(client, prompt):
-    try:
-        logger.info(f"Prompt length: {len(prompt)}")
-        completion = client.chat.completions.create(
-            extra_body={},
-            # model="microsoft/phi-4-reasoning-plus:free",
-            # model="qwen/qwen3-235b-a22b:free",
-            model="mistralai/mistral-small-3.2-24b-instruct:free",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        if not completion:
-            logger.error("OpenAI API returned None completion object")
-            raise Exception("OpenAI API returned None completion object")
-        
-        if not completion.choices:
-            logger.error(f"OpenAI API returned empty response: {str(completion)}")
-            raise Exception("Empty response from OpenAI API")
-        
-        return completion.choices[0].message.content
-    except Exception as e:
-        logger.error(f"Error calling OpenAI API: {str(e)}")
-        raise Exception(f"Failed to get response from OpenAI API: {str(e)}")
+def call_openai(client, prompt, models=None):
+    """
+    Call OpenAI API with a list of models. Try each model in order until one succeeds.
+    Args:
+        client: OpenAI client instance
+        prompt: The prompt to send
+        models: List of model names to try (if None, use default list)
+    Returns:
+        The content of the first successful completion
+    Raises:
+        Exception if all models fail
+    """
+    if models is None:
+        models = [
+            "mistralai/mistral-small-3.2-24b-instruct:free",
+            # "microsoft/phi-4-reasoning-plus:free",
+            "qwen/qwen3-235b-a22b:free",
+            "google/gemma-3-12b-it:free",
+            "deepseek/deepseek-r1-0528:free",
+        ]
+    errors = []
+    for model in models:
+        try:
+            logger.info(f"Trying model: {model} with prompt length: {len(prompt)}")
+            completion = client.chat.completions.create(
+                extra_body={},
+                model=model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            if not completion:
+                logger.error(f"OpenAI API returned None completion object for model {model}")
+                raise Exception(f"OpenAI API returned None completion object for model {model}")
+            if not completion.choices:
+                logger.error(f"OpenAI API returned empty response for model {model}: {str(completion)}")
+                raise Exception(f"Empty response from OpenAI API for model {model}")
+            logger.info(f"Model {model} succeeded.")
+            return completion.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error calling OpenAI API with model {model}: {str(e)}")
+            errors.append(f"{model}: {str(e)}")
+            continue
+    # If all models fail
+    logger.error(f"All models failed. Errors: {errors}")
+    raise Exception(f"Failed to get response from OpenAI API. Errors: {errors}")
 
 def escape_unescaped_newlines(json_str):
     def replacer(match):

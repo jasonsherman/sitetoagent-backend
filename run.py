@@ -1,6 +1,6 @@
 import os
 
-if os.getenv("DEV", True):
+if os.getenv("DEV", False):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "site-to-agent-69c06280f316.json"
 else:
     json_content = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")

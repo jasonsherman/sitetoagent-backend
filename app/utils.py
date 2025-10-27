@@ -18,6 +18,11 @@ import nest_asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from app.status_store import set_status
 from app.translate_text import translate_large_text_if_japanese, translate_data_to_japanese
+from app.university_prompts import (
+    get_university_general_prompt,
+    get_university_specialized_prompt,
+    UNIVERSITY_AGENT_TYPES,
+)
 
 # Initialize logger
 logger = setup_logger('utils')
@@ -496,29 +501,120 @@ def parse_openai_response(response_content, prefix=None, task_id=None):
         raise
 
 
-def process_content(content, task_id=None, response_language='en'):
+def process_content(content, task_id=None, response_language='en', data_type='business', agent_type=None):
     """
     Process the content using OpenAI API and return the analysis
     Args:
         content: The content to process
         task_id: Optional task ID for status updates
         response_language: Language for the response ('en' or 'ja')
+        data_type: The analysis mode ('business' or 'university')
+        agent_type: Canonical agent type key when data_type is 'university'
     """
     logger.info("Starting content processing with OpenAI")
     try:
-        if task_id:
-            set_status(task_id, {"step": "business_overview", "progress": 33, "message": "Creating business overview"})
         client = get_openai_client()
         combined_content, domain = build_combined_content(content)
-        
-            
+
+        if data_type == 'university':
+            if not agent_type or agent_type not in UNIVERSITY_AGENT_TYPES:
+                raise ValueError(f"Unsupported university agent type: {agent_type}")
+            agent_meta = UNIVERSITY_AGENT_TYPES[agent_type]
+
+            if task_id:
+                set_status(task_id, {
+                    "step": "general_knowledge",
+                    "progress": 35,
+                    "message": "Compiling shared university insights"
+                })
+
+            general_prompt = get_university_general_prompt(combined_content, domain)
+            specialized_prompt = get_university_specialized_prompt(agent_type, combined_content, domain)
+
+            def general_call():
+                logger.debug("Sending university general knowledge OpenAI API request")
+                return call_openai(client, general_prompt)
+
+            def specialized_call():
+                logger.debug(f"Sending specialized OpenAI API request for {agent_meta['display_name']}")
+                if task_id:
+                    set_status(task_id, {
+                        "step": "specialized_knowledge",
+                        "progress": 55,
+                        "message": f"Gathering {agent_meta['display_name']} focus"
+                    })
+                return call_openai(client, specialized_prompt)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_general = executor.submit(general_call)
+                future_specialized = executor.submit(specialized_call)
+                general_response = future_general.result()
+                specialized_response = future_specialized.result()
+
+            try:
+                save_data_with_rotation({"raw_general_response": general_response}, "raw_response_university_general.json", debug=True)
+                save_data_with_rotation({"raw_specialized_response": specialized_response}, f"raw_response_{agent_type}.json", debug=True)
+            except Exception as e:
+                logger.error(f"Failed to save raw university response: {e}")
+
+            general_result = parse_openai_response(general_response, None, task_id)
+            specialized_result = parse_openai_response(specialized_response, None, task_id)
+
+            combined_result = {
+                "agentType": agent_meta["display_name"],
+                "generalKnowledge": general_result,
+                "specializedKnowledge": specialized_result,
+            }
+
+            if response_language == 'ja':
+                logger.info("Translating university data to Japanese")
+                combined_result = translate_data_to_japanese(combined_result)
+
+            debug_file = save_data_with_rotation(
+                {
+                    "prompt_general": general_prompt,
+                    "prompt_specialized": specialized_prompt,
+                    "parsed_result": combined_result
+                },
+                f"university_model_response_{agent_type}.json",
+                debug=True
+            )
+
+            if task_id:
+                set_status(task_id, {
+                    "step": "agent_profile",
+                    "progress": 80,
+                    "message": f"Formatting {agent_meta['display_name']} knowledge"
+                })
+                set_status(task_id, {
+                    "step": "done",
+                    "progress": 100,
+                    "message": "Analysis complete",
+                    "result": combined_result
+                })
+            logger.debug(f"Saved university model response to {debug_file}")
+            logger.info("Successfully processed university content with OpenAI")
+            return combined_result
+
+        # Default business analysis flow
+        if task_id:
+            set_status(task_id, {
+                "step": "business_overview",
+                "progress": 33,
+                "message": "Creating business overview"
+            })
+
         main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content).replace("${domain}", domain)
         faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
 
         def main_call():
             logger.debug("Sending main OpenAI API request")
             if task_id:
-                set_status(task_id, {"step": "services_products", "progress": 50, "message": "Analyzing services & products"})
+                set_status(task_id, {
+                    "step": "services_products",
+                    "progress": 50,
+                    "message": "Analyzing services & products"
+                })
             return call_openai(client, main_prompt)
 
         def faq_call():
@@ -531,30 +627,22 @@ def process_content(content, task_id=None, response_language='en'):
             main_response = future_main.result()
             faq_response = future_faq.result()
 
-        # Save raw responses for debugging
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         try:
-            save_data_with_rotation({"raw_response": main_response}, f"raw_response_main.json", debug=True)
-            save_data_with_rotation({"raw_response": faq_response}, f"raw_response_faq.json", debug=True)
+            save_data_with_rotation({"raw_response": main_response}, "raw_response_main.json", debug=True)
+            save_data_with_rotation({"raw_response": faq_response}, "raw_response_faq.json", debug=True)
         except Exception as e:
             logger.error(f"Failed to save raw response: {e}")
 
         main_result = parse_openai_response(main_response, None, task_id)
         faq_result = parse_openai_response(faq_response, None, task_id)
 
-        # main_result = parse_openai_response(main_response, "myresponse:", task_id)
-        # faq_result = parse_openai_response(faq_response, "myresponse:", task_id)
-
-        # Merge FAQ into main result
         if "faqs" in faq_result:
             main_result["faqs"] = faq_result["faqs"]
-
 
         if response_language == 'ja':
             logger.info("Translating data to Japanese")
             main_result = translate_data_to_japanese(main_result)
 
-        # Save the model's response for debugging
         debug_file = save_data_with_rotation(
             {
                 "prompt": main_prompt,
@@ -578,7 +666,7 @@ def process_content(content, task_id=None, response_language='en'):
             set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise
 
-def analyze_url(url, max_pages=1, task_id=None, response_language='en'):
+def analyze_url(url, max_pages=1, task_id=None, response_language='en', data_type='business', agent_type=None):
     """
     Scrape URL and analyze its content
     Args:
@@ -586,6 +674,8 @@ def analyze_url(url, max_pages=1, task_id=None, response_language='en'):
         max_pages: Maximum number of pages to scrape
         task_id: Optional task ID for status updates
         response_language: Language for the response ('en' or 'ja')
+        data_type: The analysis mode ('business' or 'university')
+        agent_type: Canonical agent type key when data_type is 'university'
     """
     logger.info(f"Starting URL analysis for {url}")
     try:
@@ -602,7 +692,13 @@ def analyze_url(url, max_pages=1, task_id=None, response_language='en'):
         # Save data with rotation policy
         filepath = save_data_with_rotation(content, filename)
         logger.debug(f"Saved scraped data to {filepath}")
-        result = process_content(content, task_id=task_id, response_language=response_language)
+        result = process_content(
+            content,
+            task_id=task_id,
+            response_language=response_language,
+            data_type=data_type,
+            agent_type=agent_type
+        )
         logger.info(f"Successfully completed URL analysis for {url}")
         return result, 200
     except Exception as e:

@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from app.utils import process_content, analyze_url
 from app.logger import setup_logger
 from app.status_store import set_status, get_status
+from app.university_prompts import resolve_agent_key, UNIVERSITY_AGENT_TYPES
 import uuid
 import threading
 
@@ -41,13 +42,44 @@ def analyze_url_endpoint():
         url = data['url']
         max_pages = data.get('max_pages', 4)  # Default to 4 if not specified
         response_language = data.get('response_language', 'en')  # Default to English if not specified
+        requested_data_type = data.get('analysis_mode') or data.get('data_type') or data.get('entity_type')
+        raw_agent_type = data.get('agent_type')
+        agent_key = None
+
+        if raw_agent_type:
+            agent_key = resolve_agent_key(raw_agent_type)
+            if not agent_key:
+                valid_types = sorted(meta["display_name"] for meta in UNIVERSITY_AGENT_TYPES.values())
+                logger.warning(f"Invalid agent_type provided: {raw_agent_type}")
+                return jsonify({
+                    'error': 'Invalid agent_type provided',
+                    'valid_agent_types': valid_types
+                }), 400
+            requested_data_type = 'university'
+
+        data_type = (requested_data_type or 'business').lower()
+
+        if data_type not in {'business', 'university'}:
+            logger.warning(f"Invalid analysis mode requested: {data_type}")
+            return jsonify({'error': 'analysis_mode must be either "business" or "university"'}), 400
+
+        if data_type == 'university' and not agent_key:
+            logger.warning("University analysis requested without agent_type")
+            return jsonify({'error': 'agent_type is required for university analysis'}), 400
         
         # Validate response_language
         if response_language not in ['en', 'ja']:
             logger.warning(f"Invalid response_language: {response_language}")
             return jsonify({'error': 'response_language must be either "en" or "ja"'}), 400
         
-        logger.debug(f"URL: {url}, max_pages: {max_pages}, response_language: {response_language}")
+        logger.debug(
+            "URL: %s, max_pages: %s, response_language: %s, data_type: %s, agent_key: %s",
+            url,
+            max_pages,
+            response_language,
+            data_type,
+            agent_key,
+        )
         # Validate max_pages
         try:
             max_pages = int(max_pages)
@@ -64,13 +96,23 @@ def analyze_url_endpoint():
         task_id = str(uuid.uuid4())
         set_status(task_id, {"step": "queued", "progress": 0, "message": "Task queued"})
 
-        def background_task(url, max_pages, task_id, response_language):
+        def background_task(url, max_pages, task_id, response_language, data_type, agent_key):
             try:
-                analyze_url(url, max_pages, task_id=task_id, response_language=response_language)
+                analyze_url(
+                    url,
+                    max_pages,
+                    task_id=task_id,
+                    response_language=response_language,
+                    data_type=data_type,
+                    agent_type=agent_key
+                )
             except Exception as e:
                 set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
 
-        thread = threading.Thread(target=background_task, args=(url, max_pages, task_id, response_language))
+        thread = threading.Thread(
+            target=background_task,
+            args=(url, max_pages, task_id, response_language, data_type, agent_key)
+        )
         thread.start()
 
         return jsonify({"task_id": task_id}), 202

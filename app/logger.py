@@ -45,7 +45,7 @@ def setup_logger(name):
 
     return logger
 
-def rotate_data_files(data_dir='data', max_size_mb=10, max_files=5, include_subdirs=True):
+def rotate_data_files(data_dir='data', max_size_mb=30, max_files=20, include_subdirs=True):
     """
     Rotate data files in the specified directory based on size and count
     Args:

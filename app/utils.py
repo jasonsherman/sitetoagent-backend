@@ -429,10 +429,10 @@ def call_openai(client, prompt, models=None):
     if models is None:
         models = [
             "openai/gpt-oss-120b:free",
-            "nvidia/nemotron-3-nano-30b-a3b:free",
+            "google/gemma-3-27b-it:free",
             "mistralai/devstral-2512:free",
             "xiaomi/mimo-v2-flash:free",
-            "google/gemma-3-27b-it:free",
+            "nvidia/nemotron-3-nano-30b-a3b:free",
             "google/gemma-3-12b-it:free",
             "deepseek/deepseek-r1-0528:free",
             # "mistralai/mistral-small-3.2-24b-instruct:free",

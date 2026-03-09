@@ -101,14 +101,14 @@ def sanitize_filename(url):
 
 def get_openai_client():
     """
-    Initialize and return OpenAI client
+    Initialize and return OpenAI client (configured for Groq)
     """
     try:
         client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.getenv("GROQ_API_KEY"),
         )
-        logger.debug("OpenAI client initialized successfully")
+        logger.debug("OpenAI client initialized successfully (Groq)")
         return client
     except Exception as e:
         logger.error(f"Failed to initialize OpenAI client: {str(e)}")
@@ -428,16 +428,10 @@ def call_openai(client, prompt, models=None):
     """
     if models is None:
         models = [
-            "openai/gpt-oss-120b:free",
-            "google/gemma-3-27b-it:free",
-            "mistralai/devstral-2512:free",
-            "xiaomi/mimo-v2-flash:free",
-            "nvidia/nemotron-3-nano-30b-a3b:free",
-            "google/gemma-3-12b-it:free",
-            "deepseek/deepseek-r1-0528:free",
-            # "mistralai/mistral-small-3.2-24b-instruct:free",
-            # "qwen/qwen3-235b-a22b:free",
-            # "microsoft/phi-4-reasoning-plus:free",
+            "openai/gpt-oss-120b",
+            # "openai/gpt-oss-20b",
+            # "llama-3.3-70b-versatile",
+            # "llama-3.1-8b-instant",
         ]
     errors = []
     for model in models:

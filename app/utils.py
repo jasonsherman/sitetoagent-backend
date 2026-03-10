@@ -637,6 +637,10 @@ def process_content(content, task_id=None, response_language='en', data_type='bu
 
         if "faqs" in faq_result:
             main_result["faqs"] = faq_result["faqs"]
+        if "vision" in faq_result:
+            main_result["vision"] = faq_result["vision"]
+        if "mission" in faq_result:
+            main_result["mission"] = faq_result["mission"]
 
         if response_language == 'ja':
             logger.info("Translating data to Japanese")

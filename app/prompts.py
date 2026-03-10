@@ -70,6 +70,8 @@ def get_faq_prompt():
 
         ### Response template (fill in where indicated)
         {
+        "vision": "string — The organization's long-term aspirations or desired future state (e.g. 'where we want to be'). Extract from content; use empty string if not found.",
+        "mission": "string — The organization's purpose, what it does, who it serves, and why it exists (e.g. 'what we do'). Extract from content; use empty string if not found.",
         "faqs": [
                 {
                     "question": "string",
@@ -81,6 +83,7 @@ def get_faq_prompt():
 
 
         Rules:
+        • Extract **vision** and **mission** from the scraped content if present; otherwise use empty strings.
         • Provide **at least 10** FAQs that real visitors might ask.  
         • If the site mentions any prices/fees, include **≥ 2** pricing‑related Q&As.  
         • Each answer should be 1‑2 paragraphs, strictly based on the supplied content.  

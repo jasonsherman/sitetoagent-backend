@@ -6,7 +6,7 @@ from pyppeteer import launch
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from openai import OpenAI
-from app.prompts import get_analysis_prompt, get_faq_prompt
+from app.prompts import get_analysis_prompt, get_brand_intelligence_prompt, get_faq_prompt
 from fake_useragent import UserAgent
 import random
 import time
@@ -500,7 +500,14 @@ def parse_openai_response(response_content, prefix=None, task_id=None):
         raise
 
 
-def process_content(content, task_id=None, response_language='en', data_type='business', agent_type=None):
+def process_content(
+    content,
+    task_id=None,
+    response_language='en',
+    data_type='business',
+    agent_type=None,
+    include_brand_intelligence=False
+):
     """
     Process the content using OpenAI API and return the analysis
     Args:
@@ -605,6 +612,13 @@ def process_content(content, task_id=None, response_language='en', data_type='bu
 
         main_prompt = get_analysis_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content).replace("${domain}", domain)
         faq_prompt = get_faq_prompt().replace("{{WEBSITE_SCRAPED_CONTENT}}", combined_content)
+        brand_intelligence_prompt = None
+
+        if include_brand_intelligence:
+            brand_intelligence_prompt = get_brand_intelligence_prompt().replace(
+                "{{WEBSITE_SCRAPED_CONTENT}}",
+                combined_content
+            )
 
         def main_call():
             logger.debug("Sending main OpenAI API request")
@@ -620,20 +634,51 @@ def process_content(content, task_id=None, response_language='en', data_type='bu
             logger.debug("Sending FAQ OpenAI API request")
             return call_openai(client, faq_prompt)
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        def brand_intelligence_call():
+            logger.debug("Sending brand intelligence OpenAI API request")
+            if task_id:
+                set_status(task_id, {
+                    "step": "brand_intelligence",
+                    "progress": 60,
+                    "message": "Inferring brand intelligence"
+                })
+            return call_openai(client, brand_intelligence_prompt)
+
+        with ThreadPoolExecutor(max_workers=3 if include_brand_intelligence else 2) as executor:
             future_main = executor.submit(main_call)
             future_faq = executor.submit(faq_call)
+            future_brand_intelligence = None
+
+            if include_brand_intelligence:
+                future_brand_intelligence = executor.submit(brand_intelligence_call)
+
             main_response = future_main.result()
             faq_response = future_faq.result()
+            brand_intelligence_response = (
+                future_brand_intelligence.result()
+                if future_brand_intelligence
+                else None
+            )
 
         try:
             save_data_with_rotation({"raw_response": main_response}, "raw_response_main.json", debug=True)
             save_data_with_rotation({"raw_response": faq_response}, "raw_response_faq.json", debug=True)
+            if include_brand_intelligence and brand_intelligence_response:
+                save_data_with_rotation(
+                    {"raw_response": brand_intelligence_response},
+                    "raw_response_brand_intelligence.json",
+                    debug=True
+                )
         except Exception as e:
             logger.error(f"Failed to save raw response: {e}")
 
         main_result = parse_openai_response(main_response, None, task_id)
         faq_result = parse_openai_response(faq_response, None, task_id)
+        brand_intelligence_result = (
+            parse_openai_response(brand_intelligence_response, None, task_id)
+            if include_brand_intelligence and brand_intelligence_response
+            else None
+        )
 
         if "faqs" in faq_result:
             main_result["faqs"] = faq_result["faqs"]
@@ -641,6 +686,8 @@ def process_content(content, task_id=None, response_language='en', data_type='bu
             main_result["vision"] = faq_result["vision"]
         if "mission" in faq_result:
             main_result["mission"] = faq_result["mission"]
+        if brand_intelligence_result:
+            main_result["brandIntelligence"] = brand_intelligence_result
 
         if response_language == 'ja':
             logger.info("Translating data to Japanese")
@@ -649,6 +696,7 @@ def process_content(content, task_id=None, response_language='en', data_type='bu
         debug_file = save_data_with_rotation(
             {
                 "prompt": main_prompt,
+                "prompt_brand_intelligence": brand_intelligence_prompt,
                 "parsed_result": main_result
             },
             "model_response.json",
@@ -669,7 +717,15 @@ def process_content(content, task_id=None, response_language='en', data_type='bu
             set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
         raise
 
-def analyze_url(url, max_pages=1, task_id=None, response_language='en', data_type='business', agent_type=None):
+def analyze_url(
+    url,
+    max_pages=1,
+    task_id=None,
+    response_language='en',
+    data_type='business',
+    agent_type=None,
+    include_brand_intelligence=False
+):
     """
     Scrape URL and analyze its content
     Args:
@@ -700,7 +756,8 @@ def analyze_url(url, max_pages=1, task_id=None, response_language='en', data_typ
             task_id=task_id,
             response_language=response_language,
             data_type=data_type,
-            agent_type=agent_type
+            agent_type=agent_type,
+            include_brand_intelligence=include_brand_intelligence
         )
         logger.info(f"Successfully completed URL analysis for {url}")
         return result, 200

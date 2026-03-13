@@ -94,3 +94,52 @@ def get_faq_prompt():
         ---SCRAPED TEXT END---
 
     """
+
+
+def get_brand_intelligence_prompt():
+    return """
+        You are a brand strategist analyzing scraped website content.
+
+        Read the text after the marker ---SCRAPED TEXT START--- and infer brand intelligence grounded in the source material.
+        Return a JSON object that matches this schema exactly, with no extra keys and no commentary:
+
+        {
+            "type": "object",
+            "title": "BrandIntelligence",
+            "properties": {
+                "positioning":      { "type": "string" },
+                "voice":            { "type": "string" },
+                "offerHierarchy":   { "type": "array", "items": { "type": "string" } },
+                "personas":         { "type": "array", "items": { "type": "string" } },
+                "objections":       { "type": "array", "items": { "type": "string" } },
+                "proofPoints":      { "type": "array", "items": { "type": "string" } },
+                "visualRules":      { "type": "array", "items": { "type": "string" } }
+            },
+            "required": [
+                "positioning",
+                "voice",
+                "offerHierarchy",
+                "personas",
+                "objections",
+                "proofPoints",
+                "visualRules"
+            ]
+        }
+
+        Rules:
+        * Infer only from the supplied content. Do not invent facts or visual details that are not at least weakly signaled.
+        * positioning should be a concise paragraph explaining how the brand appears to frame itself in the market.
+        * voice should describe tone, personality, and communication style in 2-4 sentences.
+        * offerHierarchy should list the apparent order of commercial priority from flagship offer to supporting offers.
+        * personas should list 3-5 likely target customer/persona summaries.
+        * objections should list 3-5 likely buyer concerns or hesitations implied by the content.
+        * proofPoints should list 3-5 credibility signals such as outcomes, differentiators, guarantees, partnerships, credentials, or testimonials if present.
+        * visualRules should list 3-5 inferred design or presentation rules based on how the brand presents itself in the text, titles, structure, or described assets.
+        * If a value is unknown, return "" or [] as appropriate.
+        * Output JSON only. No markdown fences. No explanations.
+
+        ---SCRAPED TEXT START---
+        {{WEBSITE_SCRAPED_CONTENT}}
+        ---SCRAPED TEXT END---
+
+    """

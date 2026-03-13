@@ -11,6 +11,22 @@ logger = setup_logger('routes')
 
 main = Blueprint('main', __name__)
 
+
+def parse_optional_boolean(value, field_name):
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {'1', 'true', 'yes', 'y', 'on'}:
+            return True
+        if normalized_value in {'0', 'false', 'no', 'n', 'off'}:
+            return False
+    raise ValueError(f'{field_name} must be a boolean')
+
 @main.route('/api/analyze', methods=['POST'])
 def analyze_content():
     logger.info("Received request to /api/analyze")
@@ -44,6 +60,11 @@ def analyze_url_endpoint():
         response_language = data.get('response_language', 'en')  # Default to English if not specified
         requested_data_type = data.get('analysis_mode') or data.get('data_type') or data.get('entity_type')
         raw_agent_type = data.get('agent_type')
+        raw_include_brand_intelligence = (
+            data.get('include_brand_intelligence')
+            if 'include_brand_intelligence' in data
+            else data.get('includeBrandIntelligence', data.get('brand_intelligence'))
+        )
         agent_key = None
 
         if raw_agent_type:
@@ -71,14 +92,24 @@ def analyze_url_endpoint():
         if response_language not in ['en', 'ja']:
             logger.warning(f"Invalid response_language: {response_language}")
             return jsonify({'error': 'response_language must be either "en" or "ja"'}), 400
+
+        try:
+            include_brand_intelligence = parse_optional_boolean(
+                raw_include_brand_intelligence,
+                'include_brand_intelligence'
+            )
+        except ValueError as exc:
+            logger.warning("Invalid include_brand_intelligence value: %s", raw_include_brand_intelligence)
+            return jsonify({'error': str(exc)}), 400
         
         logger.debug(
-            "URL: %s, max_pages: %s, response_language: %s, data_type: %s, agent_key: %s",
+            "URL: %s, max_pages: %s, response_language: %s, data_type: %s, agent_key: %s, include_brand_intelligence: %s",
             url,
             max_pages,
             response_language,
             data_type,
             agent_key,
+            include_brand_intelligence,
         )
         # Validate max_pages
         try:
@@ -96,7 +127,7 @@ def analyze_url_endpoint():
         task_id = str(uuid.uuid4())
         set_status(task_id, {"step": "queued", "progress": 0, "message": "Task queued"})
 
-        def background_task(url, max_pages, task_id, response_language, data_type, agent_key):
+        def background_task(url, max_pages, task_id, response_language, data_type, agent_key, include_brand_intelligence):
             try:
                 analyze_url(
                     url,
@@ -104,14 +135,15 @@ def analyze_url_endpoint():
                     task_id=task_id,
                     response_language=response_language,
                     data_type=data_type,
-                    agent_type=agent_key
+                    agent_type=agent_key,
+                    include_brand_intelligence=include_brand_intelligence
                 )
             except Exception as e:
                 set_status(task_id, {"step": "error", "progress": 100, "message": str(e)})
 
         thread = threading.Thread(
             target=background_task,
-            args=(url, max_pages, task_id, response_language, data_type, agent_key)
+            args=(url, max_pages, task_id, response_language, data_type, agent_key, include_brand_intelligence)
         )
         thread.start()
 

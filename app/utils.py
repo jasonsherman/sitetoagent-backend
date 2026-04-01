@@ -33,6 +33,31 @@ nest_asyncio.apply()
 # Constants
 MAX_CONTENT_LENGTH = 80000  # Maximum content length in characters
 PYPPETEER_EXECUTOR = ProcessPoolExecutor(max_workers=1)  # Single worker for Pyppeteer
+BLOCK_PAGE_STRONG_PATTERNS = [
+    'vercel security checkpoint',
+    'enable javascript to continue',
+    'verify you are human',
+    'verify your browser',
+    'checking your browser',
+    'cf-browser-verification',
+    'challenge-platform',
+    'why have i been blocked',
+    'attention required!',
+]
+BLOCK_PAGE_MODERATE_PATTERNS = [
+    'security checkpoint',
+    'browser verification',
+    'browser check',
+    'access denied',
+    'request blocked',
+    'captcha',
+    'cloudflare',
+    'datadome',
+    'perimeterx',
+    'akamai',
+    'bot check',
+    'ddos protection',
+]
 
 def _fetch_with_pyppeteer_process(url):
     """
@@ -158,6 +183,41 @@ def is_valid_url(url):
         logger.error(f"URL validation failed for {url}: {str(e)}")
         return False
 
+
+def is_access_block_page(title='', description='', content=''):
+    """
+    Detect common anti-bot, CAPTCHA, and security interstitial pages.
+    """
+    normalized_text = ' '.join(filter(None, [title, description, content])).lower()
+    normalized_text = re.sub(r'\s+', ' ', normalized_text).strip()
+
+    if not normalized_text:
+        return False
+
+    if any(pattern in normalized_text for pattern in BLOCK_PAGE_STRONG_PATTERNS):
+        return True
+
+    moderate_match_count = sum(
+        1 for pattern in BLOCK_PAGE_MODERATE_PATTERNS
+        if pattern in normalized_text
+    )
+    if moderate_match_count >= 2:
+        return True
+
+    content_lines = [line.strip().lower() for line in content.splitlines() if line.strip()]
+    if (
+        len(content_lines) <= 10
+        and any('javascript' in line for line in content_lines)
+        and any(
+            keyword in line
+            for line in content_lines
+            for keyword in ['security', 'checkpoint', 'browser', 'verification']
+        )
+    ):
+        return True
+
+    return False
+
 def extract_structured_content(soup, url):
     """
     Extract structured content from the page and translate if Japanese
@@ -236,6 +296,12 @@ def is_content_sufficient(soup):
     """
     # Check for common indicators of insufficient content
     if not soup.title:
+        return False
+    title = soup.title.string if soup.title else ""
+    meta_desc = soup.find('meta', attrs={'name': 'description'})
+    description = meta_desc['content'] if meta_desc else ""
+    visible_text = soup.get_text(" ", strip=True)
+    if is_access_block_page(title, description, visible_text):
         return False
     # Check if main content elements exist
     main_content = soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol', 'li', 'span'])
@@ -406,11 +472,31 @@ def build_combined_content(content):
             domain = parsed_url.netloc
             if domain.startswith('www.'):
                 domain = domain[4:]
+        is_blocked_page = is_access_block_page(
+            page.get('title', ''),
+            page.get('description', ''),
+            page.get('content', '')
+        )
         formatted_content.append(f"URL: {page['url']}")
-        formatted_content.append(f"Title: {page['title']}")
-        formatted_content.append(f"Description: {page['description']}")
+        formatted_content.append(
+            "Title: ACCESS BLOCKED"
+            if is_blocked_page
+            else f"Title: {page['title']}"
+        )
+        formatted_content.append(
+            "Description: ACCESS BLOCKED"
+            if is_blocked_page
+            else f"Description: {page['description']}"
+        )
         formatted_content.append("Content:")
-        formatted_content.append(page['content'])
+        if is_blocked_page:
+            formatted_content.append(
+                "BLOCKED_PAGE_DETECTED: This page appears to be a security checkpoint, "
+                "browser verification, CAPTCHA, or access-block interstitial. "
+                "Do not infer business details from it. Treat the target site content as unavailable."
+            )
+        else:
+            formatted_content.append(page['content'])
         formatted_content.append("\n---\n")
     return "\n".join(formatted_content), domain
 

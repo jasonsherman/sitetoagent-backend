@@ -47,6 +47,7 @@ def get_analysis_prompt():
         Rules:
         * Output **only** valid JSON (no markdown fencing, no explanatory prose).
         * Each array must have **exactly 5 elements** where the schema calls for 5.
+        * If the scraped text indicates a blocker/interstitial page such as a CAPTCHA, browser verification, security checkpoint, "enable JavaScript" wall, access denied page, or any content marked `BLOCKED_PAGE_DETECTED`, do not treat that as the website. In that case, return empty strings for string fields and empty arrays for array fields.
         * For providedServicesProducts, competitiveDifference, and mostProfitableLineItems  
             – write **at least two paragraphs**, separated by a blank line, max three sentences each. 
         * For greetings
@@ -87,6 +88,7 @@ def get_faq_prompt():
         • Provide **at least 10** FAQs that real visitors might ask.  
         • If the site mentions any prices/fees, include **≥ 2** pricing‑related Q&As.  
         • Each answer should be 1‑2 paragraphs, strictly based on the supplied content.  
+        • If the scraped text is a blocker/interstitial page such as a CAPTCHA, browser verification, security checkpoint, "enable JavaScript" wall, access denied page, or any content marked `BLOCKED_PAGE_DETECTED`, return `""` for `vision`, `""` for `mission`, and `[]` for `faqs`.
         • Output JSON only—no markdown or commentary.
 
         ---SCRAPED TEXT START---
@@ -128,6 +130,7 @@ def get_brand_intelligence_prompt():
 
         Rules:
         * Infer only from the supplied content. Do not invent facts or visual details that are not at least weakly signaled.
+        * If the scraped text is a blocker/interstitial page such as a CAPTCHA, browser verification, security checkpoint, "enable JavaScript" wall, access denied page, or any content marked `BLOCKED_PAGE_DETECTED`, do not infer the brand. Return empty strings for string fields and empty arrays for array fields.
         * positioning should be a concise paragraph explaining how the brand appears to frame itself in the market.
         * voice should describe tone, personality, and communication style in 2-4 sentences.
         * offerHierarchy should list the apparent order of commercial priority from flagship offer to supporting offers.
